@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Markets</title>
+    <link>https://news.example.com/</link>
+    <description>Fixture feed</description>
+    <item>
+      <title>Fed holds rates steady, signals two cuts later this year</title>
+      <link>https://news.example.com/fed-holds-rates?utm_source=rss&amp;utm_medium=feed</link>
+      <description>&lt;p&gt;The Federal Reserve &lt;b&gt;held&lt;/b&gt; its benchmark rate at 4.25%&amp;ndash;4.50%.&lt;/p&gt;</description>
+      <pubDate>Tue, 13 Oct 2026 11:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Oil jumps 6% after attack on Gulf tanker</title>
+      <link>https://news.example.com/oil-jumps</link>
+      <description>Brent crude rose sharply after reports of an attack near the Strait of Hormuz.</description>
+      <pubDate>Tue, 13 Oct 2026 10:05:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Item without a link is skipped</title>
+      <description>no link</description>
+      <pubDate>Tue, 13 Oct 2026 09:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Very old story beyond max age</title>
+      <link>https://news.example.com/old-story</link>
+      <pubDate>Mon, 05 Oct 2026 09:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

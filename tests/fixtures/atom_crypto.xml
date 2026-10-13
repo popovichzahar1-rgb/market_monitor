@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Crypto</title>
+  <id>urn:example:crypto</id>
+  <updated>2026-10-13T11:00:00Z</updated>
+  <entry>
+    <title>Major exchange halts withdrawals after $200M hack</title>
+    <link href="https://crypto.example.org/exchange-hack/"/>
+    <id>urn:example:1</id>
+    <updated>2026-10-13T11:00:00Z</updated>
+    <content type="html">&lt;p&gt;Hackers drained hot wallets. BTC fell 4%.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>SEC delays decision on spot ETH ETF options</title>
+    <link href="https://crypto.example.org/eth-etf-options"/>
+    <id>urn:example:2</id>
+    <updated>2026-10-13T08:15:00Z</updated>
+    <summary>The regulator extended its review period.</summary>
+  </entry>
+</feed>

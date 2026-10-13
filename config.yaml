@@ -1,0 +1,50 @@
+# Market Monitor configuration (committed; contains NO secrets).
+# Secrets live in .env locally and in GitHub Secrets in CI.
+# Watchlist, threshold, topics and digest time can also be changed via bot
+# commands; those changes are stored in the database and override this file.
+
+timezone: Europe/Bratislava
+digest_time: "20:00"
+
+regions: [global, US, EU, CN, middle_east, eastern_europe]
+
+assets:
+  equities_markets: [US, EU]
+  crypto: [BTC, ETH]
+  crypto_market_wide: true
+
+# Starts empty on purpose. Add companies with /watch <TICKER> in Telegram.
+watchlist: []
+
+http:
+  timeout_s: 20
+  retries: 3
+  backoff_s: 2
+  per_host_min_interval_s: 1.0
+  respect_robots_txt: true
+  user_agent: "MarketMonitor/0.1 (personal non-commercial news monitor)"
+
+storage:
+  path: data/state.db
+  retention_days: 30
+
+sources:
+  rss:
+    enabled: true
+    max_items_per_feed: 40
+    max_age_hours: 48
+    feeds:
+      # --- central banks (official press-release feeds) ---
+      - {name: fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", tags: [macro, central_bank, US]}
+      - {name: ecb, url: "https://www.ecb.europa.eu/rss/press.html", tags: [macro, central_bank, EU]}
+      - {name: boe, url: "https://www.bankofengland.co.uk/rss/news", tags: [macro, central_bank, UK]}
+      # --- markets / business news ---
+      - {name: cnbc_markets, url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", tags: [markets, US]}
+      - {name: marketwatch, url: "https://feeds.content.dowjones.io/public/rss/mw_topstories", tags: [markets, US]}
+      - {name: bbc_business, url: "https://feeds.bbci.co.uk/news/business/rss.xml", tags: [markets, global]}
+      # --- geopolitics & commodities ---
+      - {name: aljazeera, url: "https://www.aljazeera.com/xml/rss/all.xml", tags: [geopolitics, middle_east]}
+      - {name: oilprice, url: "https://oilprice.com/rss/main", tags: [commodities, energy]}
+      # --- crypto ---
+      - {name: coindesk, url: "https://www.coindesk.com/arc/outboundfeeds/rss/", tags: [crypto]}
+      - {name: cointelegraph, url: "https://cointelegraph.com/rss", tags: [crypto]}

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/
+*.db
+*.db-journal
+*.db.gz
+*.db.gz.enc
+models/
+.cache/
