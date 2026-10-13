@@ -1,2 +1,0 @@
-[console_scripts]
-market-monitor = market_monitor.cli:main

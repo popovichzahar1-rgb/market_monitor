@@ -10,3 +10,4 @@ data/
 *.db.gz.enc
 models/
 .cache/
+*.egg-info/
