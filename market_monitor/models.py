@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -46,6 +47,8 @@ class Item(BaseModel):
     url: str
     tags: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
+    # Structured extras from data sources (price change, filing form, event date...).
+    meta: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("published_at")
     @classmethod
@@ -71,3 +74,11 @@ class Item(BaseModel):
     @property
     def url_norm(self) -> str:
         return normalize_url(self.url)
+
+    @property
+    def is_data(self) -> bool:
+        """Generated from numeric data (prices, FRED): templated titles, no fuzzy dedup."""
+        return DATA_TAG in self.tags
+
+
+DATA_TAG = "data"

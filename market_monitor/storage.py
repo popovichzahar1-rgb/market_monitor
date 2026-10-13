@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from market_monitor.models import Item
+from market_monitor.textutil import content_hash, title_key
 
 # Each entry upgrades the schema by one version. Never edit old entries, append new ones.
 MIGRATIONS: list[str] = [
@@ -46,6 +47,26 @@ MIGRATIONS: list[str] = [
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
+    """,
+    # 2: content dedup, mention counting, structured meta
+    """
+    ALTER TABLE items ADD COLUMN text_hash TEXT;
+    ALTER TABLE items ADD COLUMN title_key TEXT NOT NULL DEFAULT '';
+    ALTER TABLE items ADD COLUMN meta TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE items ADD COLUMN mentions INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE items ADD COLUMN other_sources TEXT NOT NULL DEFAULT '[]';
+    CREATE INDEX idx_items_text_hash ON items(text_hash);
+
+    -- URLs of duplicates merged into a canonical item, so repeats are caught by URL.
+    CREATE TABLE item_aliases (
+        url_norm TEXT PRIMARY KEY,
+        item_id  TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        source   TEXT NOT NULL,
+        seen_at  TEXT NOT NULL
+    );
+    CREATE INDEX idx_item_aliases_item ON item_aliases(item_id);
+
+    ALTER TABLE source_runs ADD COLUMN duplicates INTEGER NOT NULL DEFAULT 0;
     """,
 ]
 
@@ -102,28 +123,68 @@ class Storage:
 
     # ---- items -------------------------------------------------------------
 
-    def insert_items(self, items: Iterable[Item], now: datetime) -> list[Item]:
-        """Insert items, skipping ones already stored (same id or normalised URL).
-
-        Returns only the newly inserted items.
-        """
-        inserted: list[Item] = []
+    def insert_item(self, item: Item, now: datetime, hash_min_chars: int = 120) -> bool:
+        """Insert one item; returns False when its id or normalised URL already exists."""
         with self.conn:
-            for item in items:
-                cur = self.conn.execute(
-                    """INSERT OR IGNORE INTO items
-                       (id, source, published_at, fetched_at, title, text, url, url_norm, tags, entities)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        item.id, item.source, iso(item.published_at), iso(now), item.title,
-                        item.text, item.url, item.url_norm,
-                        json.dumps(item.tags, ensure_ascii=False),
-                        json.dumps(item.entities, ensure_ascii=False),
-                    ),
-                )
-                if cur.rowcount:
-                    inserted.append(item)
-        return inserted
+            cur = self.conn.execute(
+                """INSERT OR IGNORE INTO items
+                   (id, source, published_at, fetched_at, title, text, url, url_norm, tags,
+                    entities, meta, text_hash, title_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    item.id, item.source, iso(item.published_at), iso(now), item.title,
+                    item.text, item.url, item.url_norm,
+                    json.dumps(item.tags, ensure_ascii=False),
+                    json.dumps(item.entities, ensure_ascii=False),
+                    json.dumps(item.meta, ensure_ascii=False, default=str),
+                    None if item.is_data else content_hash(item.text, hash_min_chars),
+                    title_key(item.title),
+                ),
+            )
+        return bool(cur.rowcount)
+
+    def insert_items(self, items: Iterable[Item], now: datetime) -> list[Item]:
+        """Insert items skipping known URLs (no content dedup). Returns the new ones."""
+        return [item for item in items if self.insert_item(item, now)]
+
+    def find_by_url(self, url_norm: str) -> str | None:
+        """Id of the item stored under this normalised URL, directly or as an alias."""
+        row = self.conn.execute(
+            "SELECT id FROM items WHERE url_norm = ? UNION ALL "
+            "SELECT item_id FROM item_aliases WHERE url_norm = ? LIMIT 1",
+            (url_norm, url_norm),
+        ).fetchone()
+        return row[0] if row else None
+
+    def recent_dedup_keys(self, since: datetime) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, text_hash, title, title_key, tags FROM items WHERE published_at >= ?",
+            (iso(since),),
+        ).fetchall()
+
+    def add_mention(self, item_id: str, duplicate: Item, now: datetime) -> None:
+        """Merge a duplicate into its canonical item: count it and remember its URL/source."""
+        with self.conn:
+            row = self.conn.execute(
+                "SELECT other_sources FROM items WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row is None:
+                return
+            sources = json.loads(row["other_sources"])
+            if duplicate.source not in sources:
+                sources.append(duplicate.source)
+            self.conn.execute(
+                "UPDATE items SET mentions = mentions + 1, other_sources = ? WHERE id = ?",
+                (json.dumps(sources), item_id),
+            )
+            self.conn.execute(
+                "INSERT OR IGNORE INTO item_aliases (url_norm, item_id, source, seen_at) "
+                "VALUES (?, ?, ?, ?)",
+                (duplicate.url_norm, item_id, duplicate.source, iso(now)),
+            )
+
+    def get_item_row(self, item_id: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
 
     def count_items(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
@@ -146,13 +207,15 @@ class Storage:
 
     def record_source_run(
         self, source: str, run_at: datetime, ok: bool, fetched: int, new: int,
-        duration_s: float, error: str | None = None,
+        duration_s: float, error: str | None = None, duplicates: int = 0,
     ) -> None:
         with self.conn:
             self.conn.execute(
-                """INSERT INTO source_runs (source, run_at, ok, fetched, new, duration_s, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (source, iso(run_at), int(ok), fetched, new, round(duration_s, 3), error),
+                """INSERT INTO source_runs
+                   (source, run_at, ok, fetched, new, duration_s, error, duplicates)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (source, iso(run_at), int(ok), fetched, new, round(duration_s, 3), error,
+                 duplicates),
             )
 
     def source_health(self, now: datetime) -> list[SourceHealth]:
@@ -203,4 +266,5 @@ def row_to_item(row: sqlite3.Row) -> Item:
         id=row["id"], source=row["source"], published_at=from_iso(row["published_at"]),
         title=row["title"], text=row["text"], url=row["url"],
         tags=json.loads(row["tags"]), entities=json.loads(row["entities"]),
+        meta=json.loads(row["meta"]),
     )

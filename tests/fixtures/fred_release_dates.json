@@ -1,0 +1,5 @@
+{"release_dates": [
+  {"release_id": 10, "release_name": "Consumer Price Index", "date": "2026-10-15"},
+  {"release_id": 999, "release_name": "Some Regional Survey", "date": "2026-10-15"},
+  {"release_id": 50, "release_name": "Employment Situation", "date": "2026-10-16"}
+]}

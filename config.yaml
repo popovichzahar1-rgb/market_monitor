@@ -38,6 +38,9 @@ sources:
       - {name: fed, url: "https://www.federalreserve.gov/feeds/press_all.xml", tags: [macro, central_bank, US]}
       - {name: ecb, url: "https://www.ecb.europa.eu/rss/press.html", tags: [macro, central_bank, EU]}
       - {name: boe, url: "https://www.bankofengland.co.uk/rss/news", tags: [macro, central_bank, UK]}
+      - {name: boj, url: "https://www.boj.or.jp/en/rss/whatsnew.xml", tags: [macro, central_bank, JP]}
+      # --- regulators ---
+      - {name: sec_press, url: "https://www.sec.gov/news/pressreleases.rss", tags: [regulation, US]}
       # --- markets / business news ---
       - {name: cnbc_markets, url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", tags: [markets, US]}
       - {name: marketwatch, url: "https://feeds.content.dowjones.io/public/rss/mw_topstories", tags: [markets, US]}
@@ -45,6 +48,89 @@ sources:
       # --- geopolitics & commodities ---
       - {name: aljazeera, url: "https://www.aljazeera.com/xml/rss/all.xml", tags: [geopolitics, middle_east]}
       - {name: oilprice, url: "https://oilprice.com/rss/main", tags: [commodities, energy]}
+      - {name: eia, url: "https://www.eia.gov/rss/todayinenergy.xml", tags: [commodities, energy, US]}
+      - {name: kyiv_independent, url: "https://kyivindependent.com/news-archive/rss/", tags: [geopolitics, eastern_europe]}
+      - {name: scmp_business, url: "https://www.scmp.com/rss/92/feed", tags: [markets, CN]}
       # --- crypto ---
       - {name: coindesk, url: "https://www.coindesk.com/arc/outboundfeeds/rss/", tags: [crypto]}
       - {name: cointelegraph, url: "https://cointelegraph.com/rss", tags: [crypto]}
+      - {name: decrypt, url: "https://decrypt.co/feed", tags: [crypto]}
+
+  # Worldwide news search. Max 1 request / 5 s, so each query costs ~5.5 s of run time.
+  # Syntax: space = AND, (a OR b), "exact phrase". Docs: blog.gdeltproject.org
+  gdelt:
+    enabled: true
+    timespan: 3h
+    max_records: 50
+    queries:
+      - name: energy_geopolitics
+        query: '(sanctions OR blockade OR embargo OR pipeline OR "Strait of Hormuz" OR OPEC) (oil OR gas OR LNG)'
+        tags: [geopolitics, commodities, energy]
+      - name: central_banks
+        query: '("Federal Reserve" OR "European Central Bank" OR "Bank of Japan" OR PBOC) ("rate decision" OR "rate cut" OR "rate hike" OR "interest rates")'
+        tags: [macro, central_bank]
+      - name: crypto_events
+        query: '(bitcoin OR ethereum OR crypto OR stablecoin) (hack OR exploit OR ETF OR SEC OR ban OR regulation)'
+        tags: [crypto]
+      - name: disruptions
+        query: '(earthquake OR hurricane OR typhoon OR explosion OR strike OR cyberattack) (refinery OR port OR semiconductor OR factory OR "supply chain")'
+        tags: [disaster, supply_chain]
+      - name: eastern_europe
+        query: '(Ukraine OR Russia OR Poland OR Baltic) (sanctions OR attack OR energy OR grain OR ceasefire)'
+        tags: [geopolitics, eastern_europe]
+      - name: china_trade
+        query: '(China OR Beijing) (tariff OR "export controls" OR "rare earth" OR stimulus OR Taiwan)'
+        tags: [geopolitics, CN]
+
+  # Filings for watchlist companies (no-op while the watchlist is empty).
+  # Needs SEC_CONTACT_EMAIL (SEC fair-access policy User-Agent).
+  sec_edgar:
+    enabled: true
+    forms: [8-K, 10-Q, 10-K, 6-K, 20-F]
+    max_age_days: 7
+
+  # Needs FRED_API_KEY. release = every new value; move = only big changes.
+  fred:
+    enabled: true
+    series:
+      - {id: CPIAUCSL, name: US CPI, mode: release, tags: [inflation, US]}
+      - {id: CPILFESL, name: US core CPI, mode: release, tags: [inflation, US]}
+      - {id: PCEPILFE, name: US core PCE, mode: release, tags: [inflation, US]}
+      - {id: PAYEMS, name: US nonfarm payrolls (thousands), mode: release, tags: [labor, US]}
+      - {id: UNRATE, name: US unemployment rate, mode: release, tags: [labor, US]}
+      - {id: CP0000EZ19M086NEST, name: Euro area HICP, mode: release, tags: [inflation, EU]}
+      - {id: DFF, name: Fed funds effective rate, mode: move, threshold_abs: 0.15, tags: [central_bank, US]}
+      - {id: DGS10, name: US 10Y Treasury yield, mode: move, threshold_abs: 0.15, tags: [rates, US]}
+      - {id: VIXCLS, name: VIX volatility index, mode: move, threshold_pct: 20, tags: [markets, US]}
+      - {id: DCOILBRENTEU, name: Brent crude, mode: move, threshold_pct: 5, tags: [commodities, energy]}
+      - {id: DHHNGSP, name: Henry Hub natural gas, mode: move, threshold_pct: 8, tags: [commodities, energy]}
+    calendar_days_ahead: 7
+    calendar_releases:
+      - Consumer Price Index
+      - Employment Situation
+      - Gross Domestic Product
+      - Personal Income and Outlays
+      - Producer Price Index
+      - FOMC
+      - Advance Monthly Sales for Retail
+      - Job Openings and Labor Turnover
+
+  # Keyless public API: sharp 24h moves of BTC/ETH and the whole crypto market.
+  coingecko:
+    enabled: true
+    coins: {bitcoin: BTC, ethereum: ETH}
+    move_threshold_pct: 7
+    market_move_threshold_pct: 5
+    cooldown_hours: 6
+
+  # Strong earthquakes (supply chains: Taiwan/Japan chips, ports, energy).
+  usgs:
+    enabled: true
+    min_magnitude: 6.5
+    alert_levels: [orange, red]
+
+dedup:
+  window_hours: 48
+  title_similarity: 90       # 0-100, higher = stricter
+  min_title_tokens: 4
+  min_text_chars_for_hash: 120

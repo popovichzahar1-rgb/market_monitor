@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
+from market_monitor.collectors.sec_edgar import configure_http as configure_sec_http
 from market_monitor.config import Config, Secrets, load_config
 from market_monitor.http import HttpClient
 from market_monitor.logging_setup import setup_logging
@@ -52,6 +53,10 @@ def cmd_run(args: argparse.Namespace, config: Config, secrets: Secrets, now: dat
     with Storage(args.db or config.storage.path) as storage, (
         http or HttpClient(config.http)
     ) as client:
+        if secrets.sec_contact_email:
+            # Also covers sec.gov RSS feeds (press releases), not only the EDGAR collector.
+            configure_sec_http(client, secrets.sec_contact_email,
+                               config.sources.sec_edgar.min_interval_s)
         report = pipeline.collect(
             config, secrets, storage, client, now,
             collectors=build_collectors(config, only=args.only),

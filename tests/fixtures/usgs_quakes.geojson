@@ -1,0 +1,5 @@
+{"type": "FeatureCollection", "features": [
+  {"id": "us7000abcd", "properties": {"mag": 7.2, "place": "25 km E of Hualien City, Taiwan", "time": 1791889200000, "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000abcd", "alert": "orange", "tsunami": 1, "title": "M 7.2 - 25 km E of Hualien City, Taiwan"}},
+  {"id": "us7000small", "properties": {"mag": 4.8, "place": "somewhere at sea", "time": 1791885600000, "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000small", "alert": null, "tsunami": 0, "title": "M 4.8 - somewhere at sea"}},
+  {"id": "us7000yellow", "properties": {"mag": 5.9, "place": "near a refinery town", "time": 1791882000000, "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000yellow", "alert": "red", "tsunami": 0, "title": "M 5.9 - near a refinery town"}}
+]}

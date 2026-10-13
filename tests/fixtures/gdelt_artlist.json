@@ -1,0 +1,6 @@
+{"articles": [
+  {"url": "https://www.example-news.com/world/hormuz-tanker-seized", "url_mobile": "", "title": "Iran seizes oil tanker in Strait of Hormuz, crude prices climb", "seendate": "20261013T111500Z", "socialimage": "", "domain": "example-news.com", "language": "English", "sourcecountry": "United States"},
+  {"url": "https://other.example.net/energy/tanker-hormuz", "title": "Iran seizes oil tanker in Strait of Hormuz; crude prices climb", "seendate": "20261013T113000Z", "domain": "other.example.net", "language": "English", "sourcecountry": "United Kingdom"},
+  {"url": "https://third.example.org/eu-sanctions-gas", "title": "EU agrees new sanctions package targeting LNG shipments", "seendate": "20261013T090000Z", "domain": "third.example.org", "language": "English", "sourcecountry": "Belgium"},
+  {"url": "", "title": "missing url is skipped", "seendate": "20261013T090000Z"}
+]}

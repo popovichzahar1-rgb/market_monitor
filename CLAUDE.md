@@ -21,7 +21,18 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   `Collector`, `@register`, `name` == key under `sources:` in config.yaml, and
   add a config model in `config.py`. Import the module in `collectors/__init__.py`.
 - `models.Item` is the single normalised schema (id, source, published_at, title,
-  text, url, tags, entities). `id` = sha1(normalised URL)[:16].
+  text, url, tags, entities) plus `meta` for structured extras (price change,
+  filing form, event date). `id` = sha1(normalised URL)[:16].
+- Items generated from numbers (prices, FRED, USGS) carry the `data` tag: their
+  titles are templated, so fuzzy title dedup is skipped for them. Repeated alerts
+  for the same condition are suppressed by putting a time-window bucket in the URL.
+- Data collectors keep a baseline in kv (e.g. `fred:last:<id>`): the first sighting
+  never produces an item, so a fresh database doesn't flood the user.
+- `dedup.py`: URL (incl. aliases) → body text hash → fuzzy headline (rapidfuzz)
+  guarded by `distinguishing_tokens` (numbers/acronyms/names must match).
+  Duplicates increment `mentions` of the canonical item instead of being stored.
+- Per-host politeness: `http.set_host_interval` (GDELT 5.5 s, SEC 0.15 s),
+  `http.set_host_headers` (SEC User-Agent with contact e-mail).
 - `storage.py`: SQLite, schema via append-only `MIGRATIONS` list (`PRAGMA user_version`).
   Never edit an existing migration. Journal mode DELETE (single file, CI-friendly).
 - `config.py`: pydantic models with `extra="forbid"`; config.yaml typos must fail.

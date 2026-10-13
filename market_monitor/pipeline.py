@@ -9,6 +9,7 @@ from datetime import datetime
 
 from market_monitor.collectors import CollectContext, Collector, build_collectors
 from market_monitor.config import Config, Secrets
+from market_monitor.dedup import Deduplicator
 from market_monitor.http import HttpClient
 from market_monitor.models import Item
 from market_monitor.storage import Storage
@@ -22,6 +23,7 @@ class SourceStatus:
     ok: bool
     fetched: int = 0
     new: int = 0
+    duplicates: int = 0
     duration_s: float = 0.0
     error: str | None = None
 
@@ -49,13 +51,15 @@ def collect(
     report = RunReport(started_at=now)
     run_start = time.monotonic()
     ctx = CollectContext(http=http, config=config, secrets=secrets, state=storage, now=now)
+    dedup = Deduplicator(storage, config.dedup, now)
     for collector in collectors if collectors is not None else build_collectors(config):
         start = time.monotonic()
         status = SourceStatus(source=collector.name, ok=True)
         try:
             result = collector.collect(ctx)
-            new_items = storage.insert_items(result.items, now)
+            new_items = store_new(result.items, storage, dedup, now, config)
             status.fetched, status.new = len(result.items), len(new_items)
+            status.duplicates = status.fetched - status.new
             if result.errors:
                 status.error = "; ".join(result.errors)[:500]
             report.new_items.extend(new_items)
@@ -65,13 +69,30 @@ def collect(
         status.duration_s = time.monotonic() - start
         storage.record_source_run(
             status.source, now, status.ok, status.fetched, status.new,
-            status.duration_s, status.error,
+            status.duration_s, status.error, status.duplicates,
         )
         log.info(
-            "source %s: ok=%s fetched=%d new=%d in %.1fs",
-            status.source, status.ok, status.fetched, status.new, status.duration_s,
+            "source %s: ok=%s fetched=%d new=%d dup=%d in %.1fs",
+            status.source, status.ok, status.fetched, status.new, status.duplicates,
+            status.duration_s,
         )
         report.sources.append(status)
     storage.prune(config.storage.retention_days, now)
     report.duration_s = time.monotonic() - run_start
     return report
+
+
+def store_new(items: list[Item], storage: Storage, dedup: Deduplicator, now: datetime,
+              config: Config) -> list[Item]:
+    """Store non-duplicate items; merge duplicates into their canonical item."""
+    new_items: list[Item] = []
+    for item in items:
+        canonical = dedup.find_duplicate(item)
+        if canonical is not None:
+            if canonical != item.id:
+                storage.add_mention(canonical, item, now)
+            continue
+        if storage.insert_item(item, now, config.dedup.min_text_chars_for_hash):
+            dedup.remember(item)
+            new_items.append(item)
+    return new_items

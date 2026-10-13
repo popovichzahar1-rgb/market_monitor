@@ -12,6 +12,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import yaml
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -48,8 +50,76 @@ class RssSourceConfig(SourceConfig):
     feeds: list[FeedConfig] = Field(default_factory=list)
 
 
+class GdeltQuery(_Strict):
+    name: str
+    query: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class GdeltSourceConfig(SourceConfig):
+    # GDELT DOC 2.0 API asks for at most one request every 5 seconds.
+    min_interval_s: float = 5.5
+    timespan: str = "3h"
+    max_records: int = 50
+    language: str = "english"
+    queries: list[GdeltQuery] = Field(default_factory=list)
+
+
+class SecEdgarSourceConfig(SourceConfig):
+    forms: list[str] = Field(default_factory=lambda: ["8-K", "10-Q", "10-K", "6-K", "20-F"])
+    max_age_days: int = 7
+    tickers_cache_hours: int = 24
+    # SEC fair-access policy: max 10 requests/second.
+    min_interval_s: float = 0.15
+
+
+class FredSeries(_Strict):
+    id: str
+    name: str
+    # release: every new observation is an item; move: only when change >= threshold
+    mode: Literal["release", "move"] = "release"
+    threshold_pct: float | None = None  # relative change, %
+    threshold_abs: float | None = None  # absolute change in series units (e.g. yield points)
+    tags: list[str] = Field(default_factory=list)
+
+
+class FredSourceConfig(SourceConfig):
+    series: list[FredSeries] = Field(default_factory=list)
+    calendar_days_ahead: int = 7
+    # Release names (substring, case-insensitive) to put into the event calendar.
+    calendar_releases: list[str] = Field(default_factory=list)
+    min_interval_s: float = 0.6
+
+
+class CoinGeckoSourceConfig(SourceConfig):
+    coins: dict[str, str] = Field(default_factory=lambda: {"bitcoin": "BTC", "ethereum": "ETH"})
+    move_threshold_pct: float = 7.0
+    market_move_threshold_pct: float = 5.0
+    cooldown_hours: int = 6
+    min_interval_s: float = 2.5
+
+
+class UsgsSourceConfig(SourceConfig):
+    feed_url: str = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson"
+    min_magnitude: float = 6.5
+    alert_levels: list[str] = Field(default_factory=lambda: ["orange", "red"])
+
+
 class SourcesConfig(_Strict):
     rss: RssSourceConfig = Field(default_factory=RssSourceConfig)
+    gdelt: GdeltSourceConfig = Field(default_factory=lambda: GdeltSourceConfig(enabled=False))
+    sec_edgar: SecEdgarSourceConfig = Field(default_factory=SecEdgarSourceConfig)
+    fred: FredSourceConfig = Field(default_factory=lambda: FredSourceConfig(enabled=False))
+    coingecko: CoinGeckoSourceConfig = Field(default_factory=lambda: CoinGeckoSourceConfig(enabled=False))
+    usgs: UsgsSourceConfig = Field(default_factory=lambda: UsgsSourceConfig(enabled=False))
+
+
+class DedupConfig(_Strict):
+    window_hours: int = 48
+    # rapidfuzz token_sort_ratio (0-100) above which two headlines are the same story
+    title_similarity: float = 90.0
+    min_title_tokens: int = 4
+    min_text_chars_for_hash: int = 120
 
 
 class WatchItem(_Strict):
@@ -87,6 +157,7 @@ class Config(_Strict):
     http: HttpConfig = Field(default_factory=HttpConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
+    dedup: DedupConfig = Field(default_factory=DedupConfig)
 
     @field_validator("timezone")
     @classmethod
