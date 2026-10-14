@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Callable
 from urllib.parse import urlsplit
@@ -23,16 +24,21 @@ class HttpError(Exception):
     def __init__(self, message: str, status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.response: httpx.Response | None = None
 
 
 class RobotsDisallowed(HttpError):
     pass
 
 
+_BOT_TOKEN_PATH_RE = re.compile(r"/bot[^/]+/")
+
+
 def _safe_url(url: str) -> str:
-    """URL without query string, for log and error messages (queries may hold keys)."""
+    """URL without query string or Telegram bot token, for logs and error messages."""
     parts = urlsplit(url)
-    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+    path = _BOT_TOKEN_PATH_RE.sub("/bot***/", parts.path)
+    return f"{parts.scheme}://{parts.netloc}{path}"
 
 
 class HttpClient:
@@ -132,16 +138,36 @@ class HttpClient:
         check_robots: bool = True,
     ) -> httpx.Response:
         """GET with retries. Returns 2xx/304 responses; raises HttpError otherwise."""
+        return self.request("GET", url, params=params, headers=headers, check_robots=check_robots)
+
+    def post(self, url: str, *, json: dict | None = None, headers: dict | None = None,
+             retry: bool = True) -> httpx.Response:
+        """POST to an API (no robots.txt check). `retry=False` for non-idempotent calls."""
+        return self.request("POST", url, json=json, headers=headers, check_robots=False,
+                            retry=retry)
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        headers: dict | None = None,
+        json: dict | None = None,
+        check_robots: bool = True,
+        retry: bool = True,
+    ) -> httpx.Response:
         if check_robots and not self._allowed_by_robots(url):
             raise RobotsDisallowed(f"robots.txt disallows {_safe_url(url)}")
         host = urlsplit(url).netloc.lower()
-        attempts = self.config.retries + 1
+        attempts = self.config.retries + 1 if retry else 1
         last_error = ""
         for attempt in range(attempts):
             self._throttle(host)
             delay = self.config.backoff_s * (2**attempt)
             try:
-                resp = self._client.get(url, params=params, headers=self._headers_for(host, headers))
+                resp = self._client.request(method, url, params=params, json=json,
+                                            headers=self._headers_for(host, headers))
             except httpx.TransportError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             else:
@@ -149,7 +175,9 @@ class HttpClient:
                     return resp
                 last_error = f"HTTP {resp.status_code}"
                 if resp.status_code not in RETRY_STATUSES:
-                    raise HttpError(f"{last_error} for {_safe_url(url)}", resp.status_code)
+                    error = HttpError(f"{last_error} for {_safe_url(url)}", resp.status_code)
+                    error.response = resp
+                    raise error
                 retry_after = resp.headers.get("Retry-After", "")
                 if retry_after.isdigit():
                     delay = max(delay, float(retry_after))

@@ -82,6 +82,23 @@ MIGRATIONS: list[str] = [
     ALTER TABLE items ADD COLUMN scored_at TEXT;
     CREATE INDEX idx_items_score ON items(score);
     """,
+    # 4: alert history (one row per item ever considered for an alert)
+    """
+    CREATE TABLE alerts (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id     TEXT NOT NULL UNIQUE,
+        created_at  TEXT NOT NULL,
+        sent_at     TEXT,
+        -- sent | queued (quiet hours) | rate_limited | dry_run | failed
+        status      TEXT NOT NULL,
+        reason      TEXT NOT NULL,
+        score       REAL NOT NULL,
+        message_id  INTEGER,
+        feedback    INTEGER,
+        feedback_at TEXT
+    );
+    CREATE INDEX idx_alerts_status ON alerts(status, sent_at);
+    """,
 ]
 
 
@@ -248,6 +265,57 @@ class Storage:
             removed = self.conn.execute("DELETE FROM items WHERE fetched_at < ?", (cutoff,)).rowcount
             self.conn.execute("DELETE FROM source_runs WHERE run_at < ?", (cutoff,))
         return removed
+
+    def items_fetched_since(self, since: datetime) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM items WHERE fetched_at >= ? AND score IS NOT NULL "
+            "ORDER BY score DESC, published_at DESC",
+            (iso(since),),
+        ).fetchall()
+
+    # ---- alerts ------------------------------------------------------------
+
+    def alert_exists(self, item_id: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM alerts WHERE item_id = ?", (item_id,)).fetchone() is not None
+
+    def record_alert(self, item_id: str, status: str, reason: str, score: float,
+                     now: datetime, message_id: int | None = None) -> int:
+        sent_at = iso(now) if status in ("sent", "dry_run") else None
+        with self.conn:
+            cur = self.conn.execute(
+                """INSERT INTO alerts (item_id, created_at, sent_at, status, reason, score, message_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(item_id) DO UPDATE SET status = excluded.status,
+                     sent_at = COALESCE(excluded.sent_at, alerts.sent_at),
+                     message_id = COALESCE(excluded.message_id, alerts.message_id)""",
+                (item_id, iso(now), sent_at, status, reason, score, message_id),
+            )
+        return cur.lastrowid
+
+    def set_alert_message(self, item_ids: list[str], message_id: int | None) -> None:
+        with self.conn:
+            self.conn.executemany(
+                "UPDATE alerts SET message_id = ? WHERE item_id = ?",
+                [(message_id, i) for i in item_ids])
+
+    def alerts_sent_since(self, since: datetime) -> int:
+        """Telegram messages sent (a morning batch counts once)."""
+        return self.conn.execute(
+            "SELECT COUNT(DISTINCT COALESCE(message_id, id)) FROM alerts "
+            "WHERE status = 'sent' AND sent_at >= ?", (iso(since),)).fetchone()[0]
+
+    def alerts_by_status(self, status: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT a.*, i.title, i.url, i.topic, i.source, i.published_at, i.text, i.flags, "
+            "i.sentiment_label, i.mentions FROM alerts a JOIN items i ON i.id = a.item_id "
+            "WHERE a.status = ? ORDER BY a.score DESC", (status,)).fetchall()
+
+    def alert_counts_since(self, since: datetime) -> dict[str, int]:
+        rows = self.conn.execute(
+            "SELECT status, COUNT(*) AS n FROM alerts WHERE created_at >= ? GROUP BY status",
+            (iso(since),)).fetchall()
+        return {r["status"]: r["n"] for r in rows}
 
     # ---- source health -----------------------------------------------------
 

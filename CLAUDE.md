@@ -44,6 +44,20 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   (stored sentiment reused). The same duplicate URL never counts twice.
 - FinBERT model: `scripts/export_finbert.py` → `models/finbert-onnx/` (gitignored,
   cached in CI). Runtime deps are the optional `[ml]` extra (onnxruntime, tokenizers).
+- Run order (`cli.cmd_run`): bot commands → collect → score → alerts → digest if due.
+- `settings.py`: bot-command overrides in kv (`override:*`) layered over config.yaml;
+  always read config via `Settings.effective()` / `App.config`, never the raw base.
+- `alerts.py`: decision order documented in its docstring; `alerts.item_id` is
+  UNIQUE (never alert twice); quiet hours → `queued` → one batch message;
+  over `max_per_hour` → `rate_limited` (digest only); send failure → re-queued.
+  Dry-run records `dry_run` (not counted in the hourly limit).
+- `digest.py`: `digest_due` = first run after local `digest_time` each day
+  (robust to late cron). Watchlist block only when the watchlist is non-empty.
+- `notify/telegram.py`: Bot API over `HttpClient.post`; messages split on line
+  boundaries (each HTML tag must open and close within one line).
+  `notify/commands.py`: getUpdates, allowlist = TELEGRAM_CHAT_ID only, offset saved
+  per update; dry-run never saves the offset.
+- Ukrainian plurals via `formatting.plural` (1 джерело, 2 джерела, 5 джерел).
 - `storage.py`: SQLite, schema via append-only `MIGRATIONS` list (`PRAGMA user_version`).
   Never edit an existing migration. Journal mode DELETE (single file, CI-friendly).
 - `config.py`: pydantic models with `extra="forbid"`; config.yaml typos must fail.
@@ -53,6 +67,7 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   `route` in tests/conftest.py); fixtures in `tests/fixtures/`.
 - Every collector and scoring rule gets fixture-based tests.
 - `python -m market_monitor run --dry-run` prints Telegram messages instead of sending.
+  Telegram in tests: `FakeTelegram` + `telegram_env` fixture (tests/conftest.py).
 - `python -m market_monitor explain "headline" [--source rss:fed] [--tags crypto]`
   shows score breakdown; add a parametrized case to tests/test_scoring.py when
   changing rules.

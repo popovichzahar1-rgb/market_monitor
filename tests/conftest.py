@@ -84,3 +84,55 @@ def make_config(**overrides) -> Config:
     }
     data.update(overrides)
     return Config.model_validate(data)
+
+
+TEST_TOKEN = "123456789:AAH-test-token-abcdefghijklmnopqrstuvwxyz"
+TEST_CHAT = "4242"
+
+
+class FakeTelegram:
+    """In-memory Telegram Bot API: records calls, serves queued updates."""
+
+    def __init__(self, fail_methods: set[str] | None = None):
+        self.calls: list[tuple[str, dict]] = []
+        self.updates: list[dict] = []
+        self.next_message_id = 100
+        self.fail_methods = fail_methods or set()
+
+    @property
+    def sent(self) -> list[dict]:
+        return [p for m, p in self.calls if m == "sendMessage"]
+
+    def add_message(self, text: str, chat_id: str = TEST_CHAT) -> None:
+        update_id = 1000 + len(self.updates)
+        self.updates.append({"update_id": update_id, "message": {
+            "message_id": update_id, "chat": {"id": int(chat_id)}, "text": text}})
+
+    def handles(self, request: httpx.Request) -> bool:
+        return request.url.host == "api.telegram.org"
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        import json
+
+        method = request.url.path.rsplit("/", 1)[-1]
+        assert f"/bot{TEST_TOKEN}/" in request.url.path
+        payload = json.loads(request.content or b"{}")
+        self.calls.append((method, payload))
+        if method in self.fail_methods:
+            return httpx.Response(400, json={"ok": False, "description": "Bad Request: test failure"})
+        if method == "sendMessage":
+            self.next_message_id += 1
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": self.next_message_id}})
+        if method == "getUpdates":
+            offset = payload.get("offset") or 0
+            pending = [u for u in self.updates if u["update_id"] >= offset]
+            return httpx.Response(200, json={"ok": True, "result": pending})
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+
+@pytest.fixture
+def telegram_env(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TEST_TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", TEST_CHAT)
+    for name in ("FRED_API_KEY", "SEC_CONTACT_EMAIL"):
+        monkeypatch.delenv(name, raising=False)

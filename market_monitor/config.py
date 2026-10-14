@@ -223,6 +223,53 @@ class ScoringConfig(_Strict):
     sentiment: SentimentConfig = Field(default_factory=SentimentConfig)
 
 
+class QuietHours(_Strict):
+    start: str = "23:00"
+    end: str = "07:00"
+
+    @field_validator("start", "end")
+    @classmethod
+    def _hhmm(cls, value: str) -> str:
+        return parse_hhmm(value)
+
+
+class AlertsConfig(_Strict):
+    enabled: bool = True
+    # General threshold for any item.
+    threshold: float = 80.0
+    # Items in an urgent category (a rule with `alert: true` or a data flag below).
+    urgent_threshold: float = 65.0
+    urgent_data_flags: list[str] = Field(
+        default_factory=lambda: ["crypto_price_move", "major_quake", "sec_8k"])
+    # Items about watchlist companies, BTC or ETH.
+    priority_threshold: float = 70.0
+    priority_flags: list[str] = Field(default_factory=lambda: ["watchlist", "asset:BTC", "asset:ETH"])
+    # flag -> minimum score: alert even below the thresholds above.
+    always: dict[str, float] = Field(
+        default_factory=lambda: {"central_bank_decision": 55.0, "sec_8k": 45.0})
+    max_per_hour: int = 5
+    quiet_hours: QuietHours | None = Field(default_factory=QuietHours)
+    # Never alert on items older than this (feed backfills, late discoveries).
+    max_age_hours: float = 12.0
+    # Max alerts listed in the morning batch message.
+    quiet_batch_max: int = 15
+
+
+class DigestConfig(_Strict):
+    min_score: float = 30.0
+    per_topic: int = 5
+    # Window: since the previous digest, but at most this many hours back.
+    max_window_hours: int = 36
+    calendar_days: int = 7
+    market_series: dict[str, str] = Field(default_factory=lambda: {
+        "DCOILBRENTEU": "Brent", "DHHNGSP": "Газ HH", "DGS10": "UST 10Y", "VIXCLS": "VIX"})
+
+
+class TelegramConfig(_Strict):
+    api_base: str = "https://api.telegram.org"
+    max_message_chars: int = 4000
+
+
 class Config(_Strict):
     timezone: str = "Europe/Bratislava"
     digest_time: str = "20:00"
@@ -234,6 +281,11 @@ class Config(_Strict):
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    digest: DigestConfig = Field(default_factory=DigestConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    # Topics hidden from alerts and digest (toggled with /topics).
+    muted_topics: list[str] = Field(default_factory=list)
 
     @field_validator("timezone")
     @classmethod

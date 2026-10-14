@@ -333,3 +333,33 @@ scoring:
       weight: -25
       any: [opinion, podcast, how to, best stocks, stocks to buy, should you buy, price prediction,
             sponsored, quiz, newsletter, live updates, here's why, what to know, "watch:"]
+
+# ---------------------------------------------------------------------------
+# Urgent alerts. Thresholds can also be changed in Telegram: /threshold.
+# Decision (first match wins): muted topic -> no; flag in `always` with score
+# >= its minimum; urgent category (rule with alert: true, or urgent_data_flags)
+# >= urgent_threshold; watchlist/BTC/ETH >= priority_threshold; any >= threshold.
+# Check a headline: python -m market_monitor explain "..." (last line: alert).
+# ---------------------------------------------------------------------------
+alerts:
+  enabled: true
+  threshold: 80              # anything this important is an alert
+  urgent_threshold: 65       # central banks, exchange hacks, ETF decisions, sanctions, energy shocks, OPEC+
+  urgent_data_flags: [crypto_price_move, major_quake, sec_8k]
+  priority_threshold: 70     # watchlist companies, BTC, ETH
+  priority_flags: [watchlist, asset:BTC, asset:ETH]
+  always:                    # flag: minimum score -> always alert
+    central_bank_decision: 55
+    sec_8k: 45
+    # macro_release: 55      # uncomment to get CPI/PCE/payrolls prints as alerts
+  max_per_hour: 5            # the rest goes to the digest
+  quiet_hours: {start: "23:00", end: "07:00"}   # queued, sent as one message after
+  max_age_hours: 12          # never alert on older news
+  quiet_batch_max: 15
+
+digest:
+  min_score: 30
+  per_topic: 5
+  max_window_hours: 36
+  calendar_days: 7
+  market_series: {DCOILBRENTEU: Brent, DHHNGSP: Газ HH, DGS10: UST 10Y, VIXCLS: VIX}

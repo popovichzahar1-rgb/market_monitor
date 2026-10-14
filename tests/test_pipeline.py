@@ -33,21 +33,15 @@ def test_second_run_has_no_new_items(make_http, storage, secrets, now):
     assert len(first.new_items) == 4 and second.new_items == []
 
 
-def test_cli_dry_run_prints_message(make_http, tmp_path, capsys, now):
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "sources:\n  rss:\n    feeds:\n"
-        "      - {name: markets, url: 'https://news.example.com/rss', tags: [markets]}\n"
-        "      - {name: crypto, url: 'https://crypto.example.org/atom', tags: [crypto]}\n"
-    )
-    code = cli.main(["--config", str(cfg), "--db", str(tmp_path / "s.db"), "run", "--dry-run"],
-                    http=make_http(HANDLER), now=now)
+def test_cli_dry_run_prints_alerts(make_http, tmp_path, capsys, now, monkeypatch):
+    for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+        monkeypatch.delenv(name, raising=False)
+    code = cli.main(["--db", str(tmp_path / "s.db"), "run", "--dry-run", "--no-digest"],
+                    http=make_http(full_handler, retries=0), now=now)
     out = capsys.readouterr().out
     assert code == 0
     assert "[dry-run] Telegram message" in out
-    assert "Oil jumps 6% after attack on Gulf tanker" in out
-    assert "Джерела: 2/2 працюють" in out  # rss + sec_edgar (no-op, empty watchlist)
-    assert "не є фінансовою порадою" in out
+    assert "Major exchange halts withdrawals after $200M hack" in out
 
 
 def test_cli_reports_config_error(tmp_path):
