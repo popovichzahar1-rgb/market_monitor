@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from typing import Callable
 from urllib.parse import urlsplit
@@ -58,6 +59,7 @@ class HttpClient:
         self._host_interval: dict[str, float] = {}
         self._robots: dict[str, RobotFileParser | None] = {}
         self._host_headers: dict[str, dict[str, str]] = {}
+        self._lock = threading.Lock()  # collectors run in parallel threads
         self._client = httpx.Client(
             timeout=config.timeout_s,
             follow_redirects=True,
@@ -97,13 +99,16 @@ class HttpClient:
         return self.config.per_host_min_interval_s
 
     def _throttle(self, host: str) -> None:
+        """Reserve the next request slot for `host` under a lock, then sleep outside it,
+        so parallel collectors never exceed a host's rate limit."""
         interval = self._host_min_interval(host)
-        last = self._last_request.get(host)
-        if last is not None:
-            wait = interval - (self._clock() - last)
-            if wait > 0:
-                self._sleep(wait)
-        self._last_request[host] = self._clock()
+        with self._lock:
+            now = self._clock()
+            last = self._last_request.get(host)
+            slot = now if last is None else max(now, last + interval)
+            self._last_request[host] = slot
+        if slot > now:
+            self._sleep(slot - now)
 
     def _allowed_by_robots(self, url: str) -> bool:
         if not self.config.respect_robots_txt:

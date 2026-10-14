@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -125,7 +126,9 @@ class Storage:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        # Shared with collector threads for reads only, always under `self.lock`.
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.lock = threading.RLock()
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=DELETE")
         self.conn.execute("PRAGMA foreign_keys=ON")

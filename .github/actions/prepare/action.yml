@@ -1,0 +1,64 @@
+name: Prepare Market Monitor
+description: Python + cached deps, cached FinBERT model, restore the encrypted state from the `data` branch.
+inputs:
+  extras:
+    description: pip extras to install
+    default: ml
+  model:
+    description: restore (and on a cache miss, export) the FinBERT ONNX model
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: pyproject.toml
+
+    - name: Install
+      shell: bash
+      run: |
+        start=$SECONDS
+        spec="."
+        if [ -n "${{ inputs.extras }}" ]; then spec=".[${{ inputs.extras }}]"; fi
+        python -m pip install --disable-pip-version-check -q -e "$spec"
+        echo "install: $((SECONDS - start))s"
+
+    - name: Restore FinBERT model
+      id: model-cache
+      if: inputs.model == 'true'
+      uses: actions/cache@v4
+      with:
+        path: models/finbert-onnx
+        key: finbert-onnx-v1-${{ hashFiles('scripts/export_finbert.py') }}
+
+    - name: Export FinBERT (cache miss only, ~3 min)
+      if: inputs.model == 'true' && steps.model-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        python -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu \
+          && python -m pip install -q "transformers>=4.40" "onnx>=1.15" \
+          && python scripts/export_finbert.py --out models/.finbert-tmp \
+          && mv models/.finbert-tmp models/finbert-onnx \
+          || echo "::warning::FinBERT export failed; using the lexicon sentiment fallback"
+        rm -rf models/.finbert-tmp
+
+    - name: Restore state from the data branch
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p data
+        if git ls-remote --exit-code --heads origin data >/dev/null; then
+          git fetch -q --depth=1 origin data
+          echo "STATE_BASE_SHA=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_ENV"
+          git show FETCH_HEAD:state.db.enc > "$RUNNER_TEMP/state.db.enc"
+          # Fails the job on a wrong key or a corrupted file: nothing is overwritten then.
+          python -m market_monitor --db data/state.db state unpack --file "$RUNNER_TEMP/state.db.enc"
+          cp "$RUNNER_TEMP/state.db.enc" "$RUNNER_TEMP/state.prev.db.enc"
+        else
+          echo "STATE_BASE_SHA=" >> "$GITHUB_ENV"
+          echo "::notice::No data branch yet: starting with an empty database"
+        fi
+        echo "STATE_RESTORED=1" >> "$GITHUB_ENV"

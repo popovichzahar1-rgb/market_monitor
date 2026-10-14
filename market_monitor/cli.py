@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     commands = sub.add_parser("commands", help="process pending bot commands only")
     commands.add_argument("--dry-run", action="store_true")
     sub.add_parser("status", help="print source health")
+    state = sub.add_parser("state", help="pack/unpack the encrypted state file (CI)")
+    state.add_argument("action", choices=["pack", "unpack"])
+    state.add_argument("--file", required=True, help="packed state file (.db.enc)")
+    state.add_argument("--allow-plaintext", action="store_true",
+                       help="pack without STATE_ENCRYPTION_KEY (never for a public repo)")
     explain = sub.add_parser("explain", help="score a headline and show why")
     explain.add_argument("title")
     explain.add_argument("--text", default="")
@@ -182,9 +188,33 @@ def cmd_run(app: App) -> int:
         len(outcome.rate_limited),
         ", ".join(f"{k}={v:.2f}s" for k, v in report.timings.items()),
     )
+    write_step_summary(report, outcome)
     if app.telegram is None and not app.dry_run:
         return 3
     return 1 if report.sources and len(report.failed_sources) == len(report.sources) else 0
+
+
+def write_step_summary(report: pipeline.RunReport, outcome) -> None:
+    """Markdown run report for the GitHub Actions job page (no secrets, no item texts)."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    lines = [
+        "### Market Monitor run",
+        "",
+        "| stage | seconds |", "|---|---|",
+        *[f"| {k} | {v:.1f} |" for k, v in report.timings.items()],
+        "",
+        f"New items: **{len(report.new_items)}** · alerts sent {len(outcome.sent)}, "
+        f"queued {len(outcome.queued)}, flushed {len(outcome.flushed)}, "
+        f"rate-limited {len(outcome.rate_limited)}",
+        "",
+        "| source | ok | fetched | new | dup | seconds | error |", "|---|---|---|---|---|---|---|",
+        *[f"| {s.source} | {'✅' if s.ok else '❌'} | {s.fetched} | {s.new} | {s.duplicates} | "
+          f"{s.duration_s:.1f} | {(s.error or '').replace('|', '/')[:200]} |" for s in report.sources],
+    ]
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
 
 
 def cmd_digest(app: App) -> int:
@@ -225,6 +255,28 @@ def cmd_explain(args: argparse.Namespace, config: Config, now: datetime) -> int:
     return 0
 
 
+def cmd_state(args: argparse.Namespace, config: Config, secrets: Secrets) -> int:
+    from market_monitor.state import StateError, pack, unpack
+
+    db = args.db or config.storage.path
+    key = secrets.state_encryption_key
+    try:
+        if args.action == "pack":
+            if not key and not args.allow_plaintext:
+                log.error("STATE_ENCRYPTION_KEY is not set; refusing to write unencrypted state")
+                return 2
+            size = pack(db, args.file, key or None)
+            log.info("state packed: %s (%.1f KB%s)", args.file, size / 1024,
+                     "" if key else ", NOT encrypted")
+        else:
+            unpack(args.file, db, key or None)
+            log.info("state restored into %s", db)
+    except StateError as exc:
+        log.error("state %s failed: %s", args.action, exc)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None, http: HttpClient | None = None,
          now: datetime | None = None) -> int:
     load_dotenv()
@@ -237,6 +289,8 @@ def main(argv: list[str] | None = None, http: HttpClient | None = None,
         log.error("config error: %s", exc)
         return 2
     now = now or datetime.now(timezone.utc)
+    if args.command == "state":
+        return cmd_state(args, config, secrets)
     if args.command == "explain":
         return cmd_explain(args, config, now)
     with ExitStack() as stack:

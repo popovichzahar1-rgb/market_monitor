@@ -1,0 +1,27 @@
+name: Persist Market Monitor state
+description: Encrypt the SQLite state and force-push it as a single commit to the `data` branch.
+runs:
+  using: composite
+  steps:
+    - name: Save state to the data branch
+      shell: bash
+      run: |
+        set -euo pipefail
+        enc="$RUNNER_TEMP/state.db.enc"
+        python -m market_monitor --db data/state.db state pack --file "$enc"
+        # Build a one-commit tree without touching the working copy:
+        # state.db.enc (current), state.prev.db.enc (previous run, one-step rollback), README.md
+        entries=$(printf '100644 blob %s\tstate.db.enc\n' "$(git hash-object -w "$enc")")
+        if [ -f "$RUNNER_TEMP/state.prev.db.enc" ]; then
+          entries+=$'\n'$(printf '100644 blob %s\tstate.prev.db.enc\n' "$(git hash-object -w "$RUNNER_TEMP/state.prev.db.enc")")
+        fi
+        readme=$(printf '%s\n' "# Market Monitor state" "" \
+          "Encrypted SQLite database (Fernet, key = STATE_ENCRYPTION_KEY secret)." \
+          "Rewritten by GitHub Actions on every run; do not edit." | git hash-object -w --stdin)
+        entries+=$'\n'$(printf '100644 blob %s\tREADME.md\n' "$readme")
+        tree=$(printf '%s\n' "$entries" | git mktree)
+        commit=$(git -c user.name="market-monitor-bot" -c user.email="actions@users.noreply.github.com" \
+          commit-tree "$tree" -m "state $(date -u +%Y-%m-%dT%H:%MZ) run ${GITHUB_RUN_ID}")
+        # The lease refuses the push if another run updated the branch meanwhile.
+        git push -q --force-with-lease="refs/heads/data:${STATE_BASE_SHA:-}" origin "$commit:refs/heads/data"
+        echo "state saved: $(du -h "$enc" | cut -f1)"

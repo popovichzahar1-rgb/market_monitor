@@ -1,0 +1,59 @@
+name: monitor
+
+on:
+  schedule:
+    # Every 30 min, off the full hour (GitHub delays :00 jobs the most).
+    # Actual start is often a few minutes late; alerts/digest logic tolerates that.
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print messages instead of sending; state is not saved
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # push the encrypted state to the `data` branch
+
+concurrency:
+  group: market-monitor-state   # shared with digest.yml: never two writers
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+      STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        id: cfg
+        run: |
+          missing=""
+          for name in TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID STATE_ENCRYPTION_KEY; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+            echo "::warning::Not configured yet, skipping the run. Missing secrets:$missing (see README)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/prepare
+        if: steps.cfg.outputs.ready == 'true'
+
+      - name: Run (commands → collect → score → alerts → digest if due)
+        if: steps.cfg.outputs.ready == 'true'
+        run: python -m market_monitor run ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - uses: ./.github/actions/persist
+        # also after a failed run step, but never if the restore failed or in dry-run
+        if: always() && steps.cfg.outputs.ready == 'true' && env.STATE_RESTORED == '1' && inputs.dry_run != true

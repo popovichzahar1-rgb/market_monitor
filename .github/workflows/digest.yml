@@ -1,0 +1,57 @@
+name: digest
+
+on:
+  schedule:
+    # 20:00 Europe/Bratislava is 18:00 UTC in summer and 19:00 UTC in winter.
+    # Both slots run; the digest is sent only once per day (digest_due), and the
+    # 30-min monitor run also sends it if these are late or /digest_time changed.
+    - cron: "2 18,19 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Send now even if not due
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-monitor-state
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+      STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ] || [ -z "$STATE_ENCRYPTION_KEY" ]; then
+            echo "::warning::Not configured yet, skipping (see README)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/prepare
+        if: steps.cfg.outputs.ready == 'true'
+        with:
+          extras: ""
+          model: "false"
+
+      - name: Digest
+        if: steps.cfg.outputs.ready == 'true'
+        run: python -m market_monitor digest ${{ inputs.force && '--force' || '' }}
+
+      - uses: ./.github/actions/persist
+        if: always() && steps.cfg.outputs.ready == 'true' && env.STATE_RESTORED == '1'

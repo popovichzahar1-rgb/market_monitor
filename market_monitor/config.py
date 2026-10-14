@@ -279,6 +279,8 @@ class TelegramConfig(_Strict):
 
 
 class Config(_Strict):
+    # Collectors run in parallel threads (per-host rate limits still apply).
+    collect_workers: int = 6
     timezone: str = "Europe/Bratislava"
     digest_time: str = "20:00"
     regions: list[str] = Field(default_factory=lambda: ["global"])

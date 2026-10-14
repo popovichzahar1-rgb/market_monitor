@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
-from market_monitor.collectors import CollectContext, Collector, build_collectors
+from market_monitor.collectors import CollectContext, CollectResult, Collector, build_collectors
 from market_monitor.config import Config, Secrets
 from market_monitor.dedup import Deduplicator
 from market_monitor.http import HttpClient
@@ -49,6 +51,38 @@ class RunReport:
         return [s for s in self.sources if not s.ok]
 
 
+class BufferedState:
+    """Collector-side key/value state: reads go to the database under its lock,
+    writes are buffered and flushed by the main thread after the collector ends."""
+
+    def __init__(self, storage: Storage) -> None:
+        self.storage = storage
+        self.pending: dict[str, str] = {}
+
+    def kv_get(self, key: str, default: str | None = None) -> str | None:
+        if key in self.pending:
+            return self.pending[key]
+        with self.storage.lock:
+            return self.storage.kv_get(key, default)
+
+    def kv_set(self, key: str, value: str) -> None:
+        self.pending[key] = value
+
+    def flush(self) -> None:
+        for key, value in self.pending.items():
+            self.storage.kv_set(key, value)
+        self.pending.clear()
+
+
+def _run_collector(collector: Collector, ctx: CollectContext) -> tuple[CollectResult | None, Exception | None, float]:
+    start = time.monotonic()
+    try:
+        return collector.collect(ctx), None, time.monotonic() - start
+    except Exception as exc:  # isolate failures per source
+        log.exception("collector %s failed", collector.name)
+        return None, exc, time.monotonic() - start
+
+
 def collect(
     config: Config,
     secrets: Secrets,
@@ -58,39 +92,46 @@ def collect(
     collectors: list[Collector] | None = None,
     enrich: Callable[[Item], Item] | None = None,
 ) -> RunReport:
-    """Collect from all sources. `enrich` (e.g. watchlist matching) runs on every
-    item before dedup and storage, so stored entities are complete."""
+    """Collect from all sources in parallel threads; dedup, enrich and store results
+    in the main thread in a fixed collector order (deterministic). `enrich` (e.g.
+    watchlist matching) runs on every item before dedup and storage."""
     report = RunReport(started_at=now)
     run_start = time.monotonic()
-    ctx = CollectContext(http=http, config=config, secrets=secrets, state=storage, now=now)
+    collectors = collectors if collectors is not None else build_collectors(config)
     dedup = Deduplicator(storage, config.dedup, now)
-    for collector in collectors if collectors is not None else build_collectors(config):
-        start = time.monotonic()
-        status = SourceStatus(source=collector.name, ok=True)
-        try:
-            result = collector.collect(ctx)
-            if enrich is not None:
-                result.items = [enrich(i) for i in result.items]
-            new_items = store_new(result.items, storage, dedup, now, config, report.bumped_ids)
-            status.fetched, status.new = len(result.items), len(new_items)
-            status.duplicates = status.fetched - status.new
-            if result.errors:
-                status.error = "; ".join(result.errors)[:500]
-            report.new_items.extend(new_items)
-        except Exception as exc:  # isolate failures per source
-            log.exception("collector %s failed", collector.name)
-            status.ok, status.error = False, f"{type(exc).__name__}: {exc}"[:500]
-        status.duration_s = time.monotonic() - start
-        storage.record_source_run(
-            status.source, now, status.ok, status.fetched, status.new,
-            status.duration_s, status.error, status.duplicates,
-        )
-        log.info(
-            "source %s: ok=%s fetched=%d new=%d dup=%d in %.1fs",
-            status.source, status.ok, status.fetched, status.new, status.duplicates,
-            status.duration_s,
-        )
-        report.sources.append(status)
+    base_ctx = CollectContext(http=http, config=config, secrets=secrets, state=storage, now=now)
+    states = [BufferedState(storage) for _ in collectors]
+    workers = max(1, min(config.collect_workers, len(collectors) or 1))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="collect") as pool:
+        futures = [pool.submit(_run_collector, c, dataclasses.replace(base_ctx, state=st))
+                   for c, st in zip(collectors, states)]
+        for collector, state, future in zip(collectors, states, futures):
+            result, error, duration = future.result()
+            status = SourceStatus(source=collector.name, ok=error is None, duration_s=duration)
+            with storage.lock:
+                state.flush()
+                if result is not None:
+                    if enrich is not None:
+                        result.items = [enrich(i) for i in result.items]
+                    new_items = store_new(result.items, storage, dedup, now, config,
+                                          report.bumped_ids)
+                    status.fetched, status.new = len(result.items), len(new_items)
+                    status.duplicates = status.fetched - status.new
+                    if result.errors:
+                        status.error = "; ".join(result.errors)[:500]
+                    report.new_items.extend(new_items)
+                else:
+                    status.error = f"{type(error).__name__}: {error}"[:500]
+                storage.record_source_run(
+                    status.source, now, status.ok, status.fetched, status.new,
+                    status.duration_s, status.error, status.duplicates,
+                )
+            log.info(
+                "source %s: ok=%s fetched=%d new=%d dup=%d in %.1fs",
+                status.source, status.ok, status.fetched, status.new, status.duplicates,
+                status.duration_s,
+            )
+            report.sources.append(status)
     storage.prune(config.storage.retention_days, now)
     report.duration_s = time.monotonic() - run_start
     report.timings["collect"] = report.duration_s
