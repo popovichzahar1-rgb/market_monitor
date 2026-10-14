@@ -18,7 +18,7 @@ from market_monitor.collectors.base import (
     register,
 )
 from market_monitor.config import GdeltQuery, GdeltSourceConfig
-from market_monitor.http import json_or_error
+from market_monitor.http import BudgetExceeded, HttpError, json_or_error
 from market_monitor.models import Item
 
 log = logging.getLogger(__name__)
@@ -66,8 +66,9 @@ class GdeltCollector(Collector):
     def collect(self, ctx: CollectContext) -> CollectResult:
         cfg = self.source_config
         ctx.http.set_host_interval(API_HOST, cfg.min_interval_s)
+        ctx.http.no_retry_on_429(API_HOST)
         result = CollectResult()
-        for query in cfg.queries:
+        for index, query in enumerate(cfg.queries):
             full_query = query.query
             if cfg.language:
                 full_query += f" sourcelang:{cfg.language}"
@@ -87,6 +88,12 @@ class GdeltCollector(Collector):
             except Exception as exc:
                 log.warning("gdelt query %s failed: %s", query.name, exc)
                 result.errors.append(f"{query.name}: {exc}")
-        if cfg.queries and len(result.errors) == len(cfg.queries):
-            raise CollectorError("all GDELT queries failed: " + "; ".join(result.errors[:2]))
+                if isinstance(exc, BudgetExceeded) or (isinstance(exc, HttpError) and exc.status == 429):
+                    # Circuit breaker: GDELT is rate limiting us; the other queries would fail too.
+                    skipped = [q.name for q in cfg.queries[index + 1:]]
+                    if skipped:
+                        result.errors.append(f"skipped after rate limit: {', '.join(skipped)}")
+                    break
+        if cfg.queries and not result.items and result.errors:
+            raise CollectorError("GDELT failed: " + "; ".join(result.errors[:2]))
         return result

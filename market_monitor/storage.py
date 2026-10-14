@@ -362,11 +362,12 @@ class Storage:
     # ---- key/value state ---------------------------------------------------
 
     def kv_get(self, key: str, default: str | None = None) -> str | None:
-        row = self.conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        with self.lock:
+            row = self.conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else default
 
     def kv_set(self, key: str, value: str) -> None:
-        with self.conn:
+        with self.lock, self.conn:
             self.conn.execute(
                 "INSERT INTO kv (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

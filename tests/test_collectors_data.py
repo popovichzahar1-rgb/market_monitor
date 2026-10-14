@@ -217,3 +217,19 @@ def test_usgs_filters_by_magnitude_or_alert(make_http, storage, now):
     assert items[0].title == "Earthquake: M 7.2 - 25 km E of Hualien City, Taiwan"
     assert items[0].meta["tsunami"] is True
     assert items[0].published_at.isoformat() == "2026-10-13T11:00:00+00:00"
+
+
+def test_gdelt_circuit_breaker_on_429(make_http, storage, now):
+    calls = []
+
+    def api(request):
+        calls.append(request.url.params["query"])
+        return httpx.Response(429, headers={"Retry-After": "60"})
+
+    cfg = {"sources": {"gdelt": {"enabled": True, "queries": [
+        {"name": f"q{i}", "query": f"term{i}"} for i in range(4)]}}}
+    ctx, config = make_ctx(make_http, route({"https://api.gdeltproject.org/api/v2/doc/doc": api}),
+                           storage, now, **cfg)
+    with pytest.raises(CollectorError, match="429"):
+        GdeltCollector(config.sources.gdelt).collect(ctx)
+    assert len(calls) == 1  # no retries, remaining queries skipped

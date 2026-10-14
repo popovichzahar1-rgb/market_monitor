@@ -87,7 +87,10 @@ def full_handler(request):
 def test_full_config_end_to_end(make_http, storage, secrets, now):
     from market_monitor.config import load_config
 
-    config = load_config("config.yaml").model_copy(update={"watchlist": []})
+    data = load_config("config.yaml").model_dump()
+    # Off by default in config.yaml (rate limits / robots.txt), but their code must still work.
+    data["sources"]["gdelt"]["enabled"] = data["sources"]["coingecko"]["enabled"] = True
+    config = type(load_config("config.yaml")).model_validate(data)
     report = pipeline.collect(config, secrets, storage, make_http(full_handler), now)
     by_source = {s.source: s for s in report.sources}
     assert set(by_source) == {"rss", "gdelt", "sec_edgar", "fred", "coingecko", "usgs"}

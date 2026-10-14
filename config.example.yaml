@@ -83,8 +83,10 @@ sources:
 
   # Worldwide news search. Max 1 request / 5 s, so each query costs ~5.5 s of run time.
   # Syntax: space = AND, (a OR b), "exact phrase". Docs: blog.gdeltproject.org
+  # Measured on GitHub runners: shared IPs get HTTP 429 most of the time, so it is off
+  # by default. Locally (own IP) it works well; enable here if you run elsewhere.
   gdelt:
-    enabled: true
+    enabled: false
     timespan: 3h
     max_records: 50
     queries:
@@ -141,8 +143,10 @@ sources:
       - Job Openings and Labor Turnover
 
   # Keyless public API: sharp 24h moves of BTC/ETH and the whole crypto market.
+  # OFF: api.coingecko.com/robots.txt disallows these paths and the project respects
+  # robots.txt (decision pending, see README "CoinGecko").
   coingecko:
-    enabled: true
+    enabled: false
     coins: {bitcoin: BTC, ethereum: ETH}
     move_threshold_pct: 7
     market_move_threshold_pct: 5
@@ -234,10 +238,12 @@ scoring:
       weight: 50
       alert: true
       topic: macro
+      # Decision verbs only: "rate hike fears" / "bets on a cut" are speculation, not decisions.
       any: [raises rates, raised rates, hikes rates, hiked rates, cuts rates, lowers rates, holds rates,
-            keeps rates, leaves rates, rate decision, interest rate decision, policy rate, basis points,
-            monetary policy statement, FOMC statement, rate hike, rate cut, holds interest rates,
-            keeps interest rates, leaves interest rates, raises interest rates, cuts interest rates]
+            keeps rates, leaves rates, rate decision, interest rate decision, monetary policy statement,
+            FOMC statement, holds interest rates, keeps interest rates, leaves interest rates,
+            raises interest rates, cuts interest rates, lowers interest rates, leaves policy rate,
+            raises policy rate, cuts policy rate, delivers rate cut, delivers rate hike]
       also_any: [Fed, Federal Reserve, FOMC, ECB, European Central Bank, Bank of England, BoE,
                  Bank of Japan, BoJ, PBOC, People's Bank of China, SNB, Swiss National Bank,
                  central bank, Powell, Lagarde, Ueda, Bailey]
@@ -268,8 +274,9 @@ scoring:
       weight: 40
       alert: true
       topic: crypto
-      any: [SEC, CFTC, MiCA, regulat*, ban, bans, banned, lawsuit, sues, sued, charges, charged,
-            enforcement, crypto bill, stablecoin bill, executive order, Treasury]
+      # Enforcement and legislation. Not "regulat*" (any licence news) and not "Treasury" (yields).
+      any: [SEC, CFTC, MiCA, OFAC, ban, bans, banned, lawsuit, sues, sued, charges, charged,
+            enforcement, crackdown, crypto bill, stablecoin bill, market structure bill, executive order]
       also_any: [crypto*, bitcoin, ethereum, stablecoin*, Binance, Coinbase, Tether, Circle, DeFi]
     - name: sanctions_major
       weight: 40

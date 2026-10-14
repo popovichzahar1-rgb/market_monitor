@@ -68,3 +68,31 @@ def test_per_host_throttle_sleeps(make_http):
     client.get("https://a.example/1")
     client.get("https://a.example/2")
     assert sleeps and sleeps[0] == pytest.approx(0.9)
+
+
+def test_budget_stops_retries_and_new_requests(make_http):
+    import time as _t
+
+    from market_monitor.http import BudgetExceeded
+
+    clock = [0.0]
+    client = make_http(lambda r: httpx.Response(503), retries=5, backoff_s=10, respect_robots_txt=False)
+    client._clock = lambda: clock[0]
+    client._sleep = lambda s: clock.__setitem__(0, clock[0] + s)
+    client.set_budget(15)
+    with pytest.raises(BudgetExceeded):
+        client.get("https://a.example/x")          # 1st retry waits 10 s, the 2nd (20 s) would overrun
+    assert clock[0] == 10
+    with pytest.raises(BudgetExceeded):
+        client.get("https://a.example/y")          # budget left 5 s, the first retry won't fit
+    client.set_budget(None)
+
+
+def test_no_retry_on_429_for_flagged_hosts(make_http):
+    calls = []
+    client = make_http(lambda r: (calls.append(1), httpx.Response(429, headers={"Retry-After": "60"}))[1],
+                       respect_robots_txt=False)
+    client.no_retry_on_429("api.gdeltproject.org")
+    with pytest.raises(HttpError) as err:
+        client.get("https://api.gdeltproject.org/api/v2/doc/doc")
+    assert err.value.status == 429 and len(calls) == 1

@@ -32,6 +32,10 @@ class RobotsDisallowed(HttpError):
     pass
 
 
+class BudgetExceeded(HttpError):
+    """The calling collector ran out of its time budget; no more requests or waits."""
+
+
 _BOT_TOKEN_PATH_RE = re.compile(r"/bot[^/]+/")
 
 
@@ -60,6 +64,8 @@ class HttpClient:
         self._robots: dict[str, RobotFileParser | None] = {}
         self._host_headers: dict[str, dict[str, str]] = {}
         self._lock = threading.Lock()  # collectors run in parallel threads
+        self._local = threading.local()  # per-thread (= per-collector) time budget
+        self._no_retry_429: set[str] = set()
         self._client = httpx.Client(
             timeout=config.timeout_s,
             follow_redirects=True,
@@ -79,6 +85,29 @@ class HttpClient:
     def set_host_interval(self, host: str, seconds: float) -> None:
         """Minimum delay between requests to a host (suffix match), e.g. GDELT: 1 req / 5 s."""
         self._host_interval[host.lower()] = seconds
+
+    def no_retry_on_429(self, host: str) -> None:
+        """Fail fast on 429 for hosts whose limits are long (retrying only burns time)."""
+        self._no_retry_429.add(host.lower())
+
+    def set_budget(self, seconds: float | None) -> None:
+        """Time budget for requests made by the current thread (None = unlimited)."""
+        self._local.deadline = None if seconds is None else self._clock() + seconds
+
+    def remaining_budget(self) -> float | None:
+        return self._remaining()
+
+    def _remaining(self) -> float | None:
+        deadline = getattr(self._local, "deadline", None)
+        return None if deadline is None else deadline - self._clock()
+
+    def _wait(self, seconds: float) -> None:
+        """Sleep, but never past the budget: raise instead of waiting in vain."""
+        remaining = self._remaining()
+        if remaining is not None and seconds >= remaining:
+            raise BudgetExceeded("time budget exceeded")
+        if seconds > 0:
+            self._sleep(seconds)
 
     def set_host_headers(self, host_suffix: str, headers: dict[str, str]) -> None:
         """Extra headers for every request to a host (suffix match), e.g. SEC's User-Agent."""
@@ -108,7 +137,7 @@ class HttpClient:
             slot = now if last is None else max(now, last + interval)
             self._last_request[host] = slot
         if slot > now:
-            self._sleep(slot - now)
+            self._wait(slot - now)
 
     def _allowed_by_robots(self, url: str) -> bool:
         if not self.config.respect_robots_txt:
@@ -165,20 +194,28 @@ class HttpClient:
         if check_robots and not self._allowed_by_robots(url):
             raise RobotsDisallowed(f"robots.txt disallows {_safe_url(url)}")
         host = urlsplit(url).netloc.lower()
+        if (remaining := self._remaining()) is not None and remaining <= 0:
+            raise BudgetExceeded(f"time budget exceeded before {_safe_url(url)}")
         attempts = self.config.retries + 1 if retry else 1
         last_error = ""
         for attempt in range(attempts):
             self._throttle(host)
             delay = self.config.backoff_s * (2**attempt)
             try:
+                timeout = self.config.timeout_s
+                if (remaining := self._remaining()) is not None:
+                    timeout = max(1.0, min(timeout, remaining))
                 resp = self._client.request(method, url, params=params, json=json,
-                                            headers=self._headers_for(host, headers))
+                                            headers=self._headers_for(host, headers),
+                                            timeout=timeout)
             except httpx.TransportError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             else:
                 if resp.status_code < 300 or resp.status_code == 304:
                     return resp
                 last_error = f"HTTP {resp.status_code}"
+                if resp.status_code == 429 and host in self._no_retry_429:
+                    raise HttpError(f"{last_error} (rate limited) for {_safe_url(url)}", 429)
                 if resp.status_code not in RETRY_STATUSES:
                     error = HttpError(f"{last_error} for {_safe_url(url)}", resp.status_code)
                     error.response = resp
@@ -189,7 +226,10 @@ class HttpClient:
             if attempt < attempts - 1:
                 delay = min(delay, self.config.max_retry_after_s)
                 log.info("retrying %s in %.1fs (%s)", _safe_url(url), delay, last_error)
-                self._sleep(delay)
+                try:
+                    self._wait(delay)
+                except BudgetExceeded:
+                    raise BudgetExceeded(f"{last_error} for {_safe_url(url)}; time budget exceeded") from None
         raise HttpError(f"{last_error} for {_safe_url(url)} after {attempts} attempts")
 
 

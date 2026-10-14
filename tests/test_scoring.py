@@ -292,3 +292,35 @@ def test_rescore_when_mentions_grow(storage, now):
     pipeline.store_new([dup], storage, Deduplicator(storage, cfg.dedup, later), later, cfg,
                        report3.bumped_ids)
     assert report3.bumped_ids == set()
+
+
+# Real headlines from the first live run on GitHub Actions (2026-10-14).
+@pytest.mark.parametrize("title,text,source,not_flag", [
+    ("US inflation rises before midterm elections, fuelling rate hike fears",
+     "Economists divided on Fed rate hike as inflation creates uncertainty.", "rss:aljazeera",
+     "central_bank_decision"),
+    ("Bitcoin Falls as Hot Inflation Puts a Fed Hike Back on the Table",
+     "September CPI hit 3.7%, above forecasts, sending Treasury yields higher.", "rss:decrypt",
+     "crypto_regulation"),
+    ("Standard Chartered Opens Bitcoin and Ethereum Trading to Wealthy UAE Clients",
+     "The British bank won Dubai regulatory approval to let affluent clients buy BTC and ETH.",
+     "rss:decrypt", "crypto_regulation"),
+])
+def test_live_false_positives_stay_below_alert(title, text, source, not_flag):
+    from market_monitor.alerts import AlertView, alert_reason
+
+    (s,) = scorer().score([make(title, text=text, source=source)])
+    assert not_flag not in s.flags
+    view = AlertView(item_id="x", title=title, url="u", text=text, source=source,
+                     published_at=make("t").published_at, topic=s.topic, score=s.score, flags=s.flags)
+    assert alert_reason(view, REAL) is None, (s.score, s.reasons)
+
+
+@pytest.mark.parametrize("title,source,flag", [
+    ("Ship Sinks in Strait of Hormuz as Iran Escalates Maritime Attacks", "rss:oilprice", "energy_supply_shock"),
+    ("Houthis Vow More Attacks After Strike on Aramco Headquarters", "rss:oilprice", "energy_supply_shock"),
+    ("BitMEX Sued in UK for Return of $27M in Bitcoin Over Unlicensed Derivatives", "rss:decrypt", "crypto_regulation"),
+])
+def test_live_true_positives_keep_their_category(title, source, flag):
+    (s,) = scorer().score([make(title, text="oil tanker attacks" if "oil" in source else "", source=source)])
+    assert flag in s.flags, s.reasons

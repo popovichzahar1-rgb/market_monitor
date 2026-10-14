@@ -27,3 +27,13 @@ def test_redacts_exception_text(capsys):
 def test_filter_keeps_plain_messages():
     f = RedactingFilter()
     assert f.redact("nothing here") == "nothing here"
+
+
+def test_exception_log_keeps_formatted_message(capsys):
+    setup_logging("INFO")
+    try:
+        raise ValueError("x")
+    except ValueError:
+        logging.getLogger("t").exception("collector %s failed", "gdelt")
+    err = capsys.readouterr().err
+    assert "collector gdelt failed" in err and "%s" not in err

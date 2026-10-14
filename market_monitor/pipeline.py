@@ -76,11 +76,14 @@ class BufferedState:
 
 def _run_collector(collector: Collector, ctx: CollectContext) -> tuple[CollectResult | None, Exception | None, float]:
     start = time.monotonic()
+    ctx.http.set_budget(ctx.config.http.source_budget_s)
     try:
         return collector.collect(ctx), None, time.monotonic() - start
     except Exception as exc:  # isolate failures per source
         log.exception("collector %s failed", collector.name)
         return None, exc, time.monotonic() - start
+    finally:
+        ctx.http.set_budget(None)
 
 
 def collect(

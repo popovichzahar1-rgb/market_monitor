@@ -26,7 +26,9 @@ class HttpConfig(_Strict):
     timeout_s: float = 20.0
     retries: int = 3
     backoff_s: float = 2.0
-    max_retry_after_s: float = 60.0
+    max_retry_after_s: float = 20.0
+    # Max seconds one collector may spend (requests + waits) per run.
+    source_budget_s: float = 90.0
     per_host_min_interval_s: float = 1.0
     respect_robots_txt: bool = True
     user_agent: str = "MarketMonitor/0.1 (personal non-commercial news monitor)"
@@ -44,6 +46,7 @@ class SourceConfig(_Strict):
 
 
 class RssSourceConfig(SourceConfig):
+    workers: int = 8
     max_items_per_feed: int = 40
     max_age_hours: int = 48
     text_max_chars: int = 1500

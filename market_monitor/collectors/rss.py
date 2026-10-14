@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import feedparser
@@ -81,14 +82,26 @@ class RssCollector(Collector):
     def collect(self, ctx: CollectContext) -> CollectResult:
         result = CollectResult()
         feeds = [f for f in self.source_config.feeds if f.enabled]
-        failed = 0
-        for feed in feeds:
+        budget = ctx.http.remaining_budget()
+
+        def fetch(feed: FeedConfig) -> list[Item]:
+            ctx.http.set_budget(budget)  # inherit the collector's budget in this thread
             try:
-                result.items.extend(self._collect_feed(ctx, feed))
-            except Exception as exc:  # one broken feed must not stop the others
-                failed += 1
-                log.warning("rss feed %s failed: %s", feed.name, exc)
-                result.errors.append(f"{feed.name}: {exc}")
+                return self._collect_feed(ctx, feed)
+            finally:
+                ctx.http.set_budget(None)
+
+        failed = 0
+        # Feeds live on different hosts: fetch them concurrently (per-host limits still apply).
+        with ThreadPoolExecutor(max_workers=max(1, self.source_config.workers)) as pool:
+            futures = [pool.submit(fetch, feed) for feed in feeds]
+            for feed, future in zip(feeds, futures):
+                try:
+                    result.items.extend(future.result())
+                except Exception as exc:  # one broken feed must not stop the others
+                    failed += 1
+                    log.warning("rss feed %s failed: %s", feed.name, exc)
+                    result.errors.append(f"{feed.name}: {exc}")
         if feeds and failed == len(feeds):
             raise CollectorError(f"all {failed} feeds failed: " + "; ".join(result.errors[:3]))
         return result

@@ -34,7 +34,7 @@ class RedactingFilter(logging.Filter):
         if record.exc_info and record.exc_info[1] is not None:
             # Render the traceback now so we can redact it, then drop exc_info.
             formatted = logging.Formatter().formatException(record.exc_info)
-            record.msg = f"{record.msg}\n{self.redact(formatted)}"
+            record.msg = f"{redacted}\n{self.redact(formatted)}"
             record.args, record.exc_info, record.exc_text = None, None, None
         return True
 
