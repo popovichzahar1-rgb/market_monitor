@@ -65,6 +65,15 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
 - SEC collector also stores `sec:latest:<T>` (latest filing per form, any age) and
   `sec:profile:<T>` (name, SIC industry) for the digest company block.
 - Ukrainian plurals via `formatting.plural` (1 джерело, 2 джерела, 5 джерел).
+- `pipeline.collect` runs collectors in a thread pool (`collect_workers`); collectors
+  only touch state through `BufferedState` (flushed by the main thread), and all
+  dedup/storage happens in the main thread under `storage.lock`, in collector order.
+  `HttpClient._throttle` reserves per-host slots under a lock.
+- CI (`.github/`): `monitor.yml` (30 min), `digest.yml`, `tests.yml`; composite
+  actions `prepare` (deps, FinBERT cache/export, restore) and `persist` (pack, push).
+  State = `state.py` (gzip + Fernet/scrypt) on the `data` branch as ONE commit,
+  pushed with `--force-with-lease`. Persist only runs when restore succeeded
+  (`STATE_RESTORED`) and never in dry-run. Never log or print decrypted state.
 - `storage.py`: SQLite, schema via append-only `MIGRATIONS` list (`PRAGMA user_version`).
   Never edit an existing migration. Journal mode DELETE (single file, CI-friendly).
 - `config.py`: pydantic models with `extra="forbid"`; config.yaml typos must fail.
