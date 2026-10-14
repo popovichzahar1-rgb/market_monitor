@@ -134,3 +134,202 @@ dedup:
   title_similarity: 90       # 0-100, higher = stricter
   min_title_tokens: 4
   min_text_chars_for_hash: 120
+
+# ---------------------------------------------------------------------------
+# Importance scoring (0-100). score = rules + data magnitude + bonuses + tone.
+# Keywords: lowercase = any case; containing uppercase = case-sensitive
+# (Fed, SEC, ETF, US). "*" = suffix wildcard (sanction* -> sanctions).
+# Rules marked `alert: true` define "urgent" categories used by alerts (stage 4).
+# Tune with: python -m market_monitor explain "headline" [--text "..."]
+# ---------------------------------------------------------------------------
+scoring:
+  prefilter_min: 25          # FinBERT runs only for items at/above this rule score
+
+  sentiment:
+    backend: auto            # auto | onnx | lexicon | none
+    model_dir: models/finbert-onnx
+    max_length: 96
+    batch_size: 16
+    weight: 10               # up to +10 for strongly toned text
+    negative_extra: 5        # +5 more for clearly negative text
+
+  source_weights:            # exact source or prefix ("gdelt" covers gdelt:*)
+    rss:fed: 25
+    rss:ecb: 25
+    rss:boe: 15
+    rss:boj: 15
+    rss:sec_press: 10
+    rss:cnbc_markets: 5
+    rss:marketwatch: 5
+    rss:bbc_business: 5
+    rss:coindesk: 5
+    gdelt: -5                # broad search, noisier
+
+  mentions_bonus_per_source: 6   # same story from several sources
+  mentions_bonus_max: 18
+  asset_bonus: 10
+  asset_keywords:
+    BTC: [bitcoin, BTC]
+    ETH: [ethereum, ether, ETH]
+  region_bonus: 5            # only for regions listed in `regions:` above
+  region_keywords:
+    US: [U.S., US, United States, Wall Street, Washington]
+    EU: [EU, European Union, eurozone, euro area, Brussels, Germany, German, France, French, Italy]
+    CN: [China, Chinese, Beijing, PBOC, yuan]
+    middle_east: [Iran, Israel, Saudi, Gaza, Yemen, Houthi*, Iraq, Qatar, UAE, Strait of Hormuz, Red Sea, Gulf]
+    eastern_europe: [Ukrain*, Russia*, Kremlin, Poland, Polish, Baltic, Belarus, Moldova, Slovakia, Hungary, Romania, Czech]
+  watchlist_bonus: 25
+
+  default_topic: other
+  topics:                    # order matters: first topic whose tags match wins
+    macro:
+      label: Макроекономіка й центробанки
+      tags: [macro, central_bank, inflation, labor, rates]
+      keywords: [inflation, interest rate*, central bank, GDP, recession, bond yields, Treasury yields]
+    crypto:
+      label: Крипта
+      tags: [crypto]
+      keywords: [bitcoin, ethereum, crypto*, stablecoin*, blockchain, DeFi, token*]
+    geopolitics:
+      label: Геополітика й сировина
+      tags: [geopolitics, commodities, energy, eastern_europe, middle_east]
+      keywords: [sanction*, war, oil, gas, LNG, OPEC, tariff*, military, missile*, metals, copper]
+    equities:
+      label: Акції й компанії
+      tags: [markets, sec, filing, watchlist]
+      keywords: [stocks, shares, earnings, S&P 500, Nasdaq, Dow, IPO, merger, acquisition]
+    other:
+      label: Інші чинники
+      tags: [disaster, supply_chain, regulation]
+      keywords: [earthquake, hurricane, cyberattack, outage, breakthrough, regulator*]
+
+  rules:
+    # ---- urgent categories (alert: true) ----
+    - name: central_bank_decision
+      weight: 50
+      alert: true
+      topic: macro
+      any: [raises rates, raised rates, hikes rates, hiked rates, cuts rates, lowers rates, holds rates,
+            keeps rates, leaves rates, rate decision, interest rate decision, policy rate, basis points,
+            monetary policy statement, FOMC statement, rate hike, rate cut, holds interest rates,
+            keeps interest rates, leaves interest rates, raises interest rates, cuts interest rates]
+      also_any: [Fed, Federal Reserve, FOMC, ECB, European Central Bank, Bank of England, BoE,
+                 Bank of Japan, BoJ, PBOC, People's Bank of China, SNB, Swiss National Bank,
+                 central bank, Powell, Lagarde, Ueda, Bailey]
+    - name: central_bank_shock
+      weight: 40
+      alert: true
+      topic: macro
+      any: [emergency meeting, emergency rate, unscheduled, surprise cut, surprise hike, intervene*,
+            intervention, quantitative tightening, quantitative easing, yield curve control, liquidity facility]
+      also_any: [Fed, Federal Reserve, FOMC, ECB, Bank of England, BoE, Bank of Japan, BoJ, PBOC,
+                 central bank, Treasury]
+    - name: exchange_hack
+      weight: 55
+      alert: true
+      topic: crypto
+      any: [hack*, exploit*, drained, stolen, breach*, halts withdrawals, suspends withdrawals,
+            withdrawals halted, withdrawals paused, insolvent, insolvency]
+      also_any: [exchange, Binance, Coinbase, Kraken, OKX, Bybit, Bitfinex, bridge, DeFi, wallet*,
+                 protocol, stablecoin*, crypto*]
+    - name: crypto_etf_decision
+      weight: 45
+      alert: true
+      topic: crypto
+      any: [bitcoin ETF, ether ETF, ethereum ETF, spot bitcoin, spot ether, spot ethereum, crypto ETF,
+            BTC ETF, ETH ETF, solana ETF, XRP ETF]
+      also_any: [approve*, approval, reject*, denies, denied, delay*, decision, deadline, withdraw*]
+    - name: crypto_regulation
+      weight: 40
+      alert: true
+      topic: crypto
+      any: [SEC, CFTC, MiCA, regulat*, ban, bans, banned, lawsuit, sues, sued, charges, charged,
+            enforcement, crypto bill, stablecoin bill, executive order, Treasury]
+      also_any: [crypto*, bitcoin, ethereum, stablecoin*, Binance, Coinbase, Tether, Circle, DeFi]
+    - name: sanctions_major
+      weight: 40
+      alert: true
+      topic: geopolitics
+      any: [sanction*, embargo, price cap, export ban, export controls, asset freeze, SWIFT]
+      also_any: [oil, gas, LNG, crude, bank*, Russia*, Iran*, China, Chinese, tanker*, shipping,
+                 refiner*, semiconductor*, chip*, metals, aluminium, aluminum, nickel]
+    - name: energy_supply_shock
+      weight: 45
+      alert: true
+      topic: geopolitics
+      any: [attack*, strike*, drone*, missile*, explosion, blockade, seize*, seizure, closure, closes,
+            shut*, outage, sabotage, halt*, disrupt*, force majeure]
+      also_any: [oil, gas, LNG, pipeline*, refiner*, tanker*, Strait of Hormuz, Red Sea, Suez,
+                 Bab el-Mandeb, oilfield*, terminal, Nord Stream, Druzhba, TurkStream, export terminal]
+    - name: opec_decision
+      weight: 40
+      alert: true
+      topic: geopolitics
+      any: [OPEC, OPEC+]
+      also_any: [cut*, output, production, quota*, boost*, increase*, decision, meeting, supply]
+
+    # ---- important, digest-level ----
+    - name: war_escalation
+      weight: 35
+      topic: geopolitics
+      any: [invasion, invade*, mobiliz*, declares war, nuclear, martial law, ceasefire, peace deal,
+            peace talks, escalat*, offensive, airstrike*]
+      also_any: [Russia*, Ukrain*, Iran*, Israel*, China, Taiwan, NATO, Poland, Baltic, North Korea,
+                 Houthi*, Hezbollah]
+    - name: macro_data
+      weight: 30
+      topic: macro
+      any: [inflation, CPI, PCE, consumer prices, payrolls, jobs report, unemployment rate, GDP,
+            recession, PMI, retail sales, jobless claims, stagflation]
+    - name: trade_policy
+      weight: 30
+      topic: geopolitics
+      any: [tariff*, trade war, export controls, rare earth*, trade deal, customs duties, trade talks]
+    - name: market_moves
+      weight: 25
+      topic: equities
+      any: [sell-off, selloff, plunge*, tumble*, crash*, soar*, record high, all-time high,
+            circuit breaker, bear market, correction, rout, slump*]
+      also_any: [stocks, shares, S&P, S&P 500, Nasdaq, Dow, Stoxx, DAX, FTSE, index, indices,
+                 markets, Nikkei, Hang Seng, equities, Wall Street]
+    - name: commodities_moves
+      weight: 25
+      topic: geopolitics
+      any: [oil prices, crude, Brent, WTI, natural gas, gas prices, copper, gold, aluminium,
+            aluminum, nickel, lithium, wheat, grain]
+      also_any: [surge*, jump*, soar*, plunge*, slump*, spike*, record, rall*, tumble*, shortage, highest, lowest]
+    - name: earnings
+      weight: 25
+      topic: equities
+      any: [earnings, quarterly results, revenue, guidance, profit warning, beats estimates,
+            misses estimates, EPS, outlook]
+    - name: corporate_events
+      weight: 25
+      topic: equities
+      any: [merger, acquisition, acquire*, takeover, buyout, bankruptcy, Chapter 11, IPO, delist*,
+            recall, layoffs, steps down, CEO resign*, stock split, buyback, short seller]
+    - name: disasters_disruption
+      weight: 30
+      topic: other
+      any: [earthquake, hurricane, typhoon, tsunami, flood*, wildfire, explosion, fire, blackout,
+            power outage, cyberattack, ransomware, strike, port closure, derail*, collapse*]
+      also_any: [refiner*, port, ports, plant, factory, fab, semiconductor*, pipeline, grid,
+                 supply chain, shipping, airport, chip*, mine, mines, data center]
+    - name: regulatory_decisions
+      weight: 25
+      topic: other
+      any: [antitrust, fine, fined, ruling, court, regulator*, FDA, European Commission, DOJ, FTC,
+            competition authority]
+      also_any: [billion, Apple, Google, Alphabet, Microsoft, Meta, Amazon, Nvidia, Tesla, bank*,
+                 drug*, merger, approval, approves, blocks]
+    - name: tech_breakthrough
+      weight: 20
+      topic: other
+      any: [breakthrough, unveils, launches, first-ever]
+      also_any: [AI, artificial intelligence, quantum, chip*, semiconductor*, fusion, battery, GPU]
+
+    # ---- noise (negative weight, applied in full) ----
+    - name: noise
+      weight: -25
+      any: [opinion, podcast, how to, best stocks, stocks to buy, should you buy, price prediction,
+            sponsored, quiz, newsletter, live updates, here's why, what to know, "watch:"]

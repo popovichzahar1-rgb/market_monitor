@@ -8,10 +8,13 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import TYPE_CHECKING, Iterable, Iterator
 
 from market_monitor.models import Item
 from market_monitor.textutil import content_hash, title_key
+
+if TYPE_CHECKING:
+    from market_monitor.scoring import Score
 
 # Each entry upgrades the schema by one version. Never edit old entries, append new ones.
 MIGRATIONS: list[str] = [
@@ -67,6 +70,17 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_item_aliases_item ON item_aliases(item_id);
 
     ALTER TABLE source_runs ADD COLUMN duplicates INTEGER NOT NULL DEFAULT 0;
+    """,
+    # 3: scoring results
+    """
+    ALTER TABLE items ADD COLUMN score REAL;
+    ALTER TABLE items ADD COLUMN topic TEXT;
+    ALTER TABLE items ADD COLUMN flags TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE items ADD COLUMN reasons TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE items ADD COLUMN sentiment REAL;
+    ALTER TABLE items ADD COLUMN sentiment_label TEXT;
+    ALTER TABLE items ADD COLUMN scored_at TEXT;
+    CREATE INDEX idx_items_score ON items(score);
     """,
 ]
 
@@ -162,14 +176,24 @@ class Storage:
             (iso(since),),
         ).fetchall()
 
-    def add_mention(self, item_id: str, duplicate: Item, now: datetime) -> None:
-        """Merge a duplicate into its canonical item: count it and remember its URL/source."""
+    def add_mention(self, item_id: str, duplicate: Item, now: datetime) -> bool:
+        """Merge a duplicate into its canonical item: count it and remember its URL/source.
+
+        Returns False when this exact URL was already merged before (not a new mention).
+        """
         with self.conn:
             row = self.conn.execute(
                 "SELECT other_sources FROM items WHERE id = ?", (item_id,)
             ).fetchone()
             if row is None:
-                return
+                return False
+            known_alias = self.conn.execute(
+                "SELECT 1 FROM item_aliases WHERE url_norm = ?", (duplicate.url_norm,)
+            ).fetchone()
+            if known_alias or duplicate.url_norm == self.conn.execute(
+                "SELECT url_norm FROM items WHERE id = ?", (item_id,)
+            ).fetchone()[0]:
+                return False
             sources = json.loads(row["other_sources"])
             if duplicate.source not in sources:
                 sources.append(duplicate.source)
@@ -182,6 +206,28 @@ class Storage:
                 "VALUES (?, ?, ?, ?)",
                 (duplicate.url_norm, item_id, duplicate.source, iso(now)),
             )
+        return True
+
+    def mentions(self, ids: Iterable[str]) -> dict[str, int]:
+        return {r["id"]: r["mentions"] for r in self.load_items(ids)}
+
+    def save_score(self, item_id: str, score: "Score", now: datetime) -> None:
+        with self.conn:
+            self.conn.execute(
+                """UPDATE items SET score = ?, topic = ?, flags = ?, reasons = ?,
+                   sentiment = COALESCE(?, sentiment),
+                   sentiment_label = COALESCE(?, sentiment_label), scored_at = ?
+                   WHERE id = ?""",
+                (score.score, score.topic, json.dumps(score.flags), json.dumps(score.reasons),
+                 score.sentiment, score.sentiment_label, iso(now), item_id),
+            )
+
+    def load_items(self, ids: Iterable[str]) -> list[sqlite3.Row]:
+        ids = list(ids)
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        return self.conn.execute(f"SELECT * FROM items WHERE id IN ({marks})", ids).fetchall()
 
     def get_item_row(self, item_id: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()

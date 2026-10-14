@@ -3,26 +3,43 @@
 from __future__ import annotations
 
 from html import escape
-from zoneinfo import ZoneInfo
 
+from market_monitor.config import Config
 from market_monitor.pipeline import RunReport
 
 DISCLAIMER = "ℹ️ Лише інформація, не є фінансовою порадою."
 
 
-def format_run_preview(report: RunReport, tz: ZoneInfo, limit: int = 15) -> str:
-    """Stage-1 preview of newly collected items (replaced by alerts/digest later)."""
+def tone_icon(label: str | None) -> str:
+    return {"positive": "🟢", "negative": "🔴", "neutral": "⚪"}.get(label or "", "")
+
+
+def format_run_preview(report: RunReport, config: Config, limit: int = 20) -> str:
+    """Interim preview of newly scored items grouped by topic (alerts/digest in stage 4)."""
+    tz = config.tz
     when = report.started_at.astimezone(tz).strftime("%d.%m %H:%M")
-    lines = [f"<b>Market Monitor · нові записи ({when})</b>", ""]
-    items = sorted(report.new_items, key=lambda i: i.published_at, reverse=True)
-    if not items:
-        lines.append("Нових записів немає.")
-    for item in items[:limit]:
-        ts = item.published_at.astimezone(tz).strftime("%H:%M")
-        tags = f" <i>[{escape(', '.join(item.tags))}]</i>" if item.tags else ""
-        lines.append(f"• {ts} <a href=\"{escape(item.url)}\">{escape(item.title)}</a>{tags}")
-    if len(items) > limit:
-        lines.append(f"… і ще {len(items) - limit}")
+    lines = [f"<b>Market Monitor · нові записи ({when})</b>"]
+    scored = sorted(report.scored, key=lambda p: p[1].score, reverse=True)[:limit]
+    if not scored:
+        lines += ["", "Нових записів немає."]
+    labels = {key: t.label for key, t in config.scoring.topics.items()}
+    for topic_key in [*labels, None]:
+        if topic_key is None:  # topics missing from config
+            group = [(i, s) for i, s in scored if s.topic not in labels]
+        else:
+            group = [(i, s) for i, s in scored if s.topic == topic_key]
+        if not group:
+            continue
+        lines += ["", f"<b>{escape(labels.get(topic_key, 'Інше'))}</b>"]
+        for item, sc in group:
+            urgent = "🚨 " if any(not f.startswith("asset:") and f != "watchlist" for f in sc.flags) else ""
+            lines.append(
+                f"{urgent}<b>{sc.score:.0f}</b> {tone_icon(sc.sentiment_label)} "
+                f"<a href=\"{escape(item.url)}\">{escape(item.title)}</a>"
+            )
+    hidden = len(report.scored) - len(scored)
+    if hidden > 0:
+        lines.append(f"\n… і ще {hidden} із нижчою оцінкою")
     lines += ["", format_sources_line(report), "", DISCLAIMER]
     return "\n".join(lines)
 

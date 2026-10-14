@@ -12,7 +12,9 @@ from market_monitor.config import Config, Secrets
 from market_monitor.dedup import Deduplicator
 from market_monitor.http import HttpClient
 from market_monitor.models import Item
-from market_monitor.storage import Storage
+from market_monitor.scoring import Score, Scorer
+from market_monitor.scoring.sentiment import Sentiment
+from market_monitor.storage import Storage, row_to_item
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +35,13 @@ class RunReport:
     started_at: datetime
     sources: list[SourceStatus] = field(default_factory=list)
     new_items: list[Item] = field(default_factory=list)
+    # Older items that got new mentions (duplicates from other sources) this run.
+    bumped_ids: set[str] = field(default_factory=set)
+    scored: list[tuple[Item, Score]] = field(default_factory=list)
+    # (item, new score, previous score) for bumped items whose score was recomputed.
+    rescored: list[tuple[Item, Score, float | None]] = field(default_factory=list)
     duration_s: float = 0.0
+    timings: dict[str, float] = field(default_factory=dict)
 
     @property
     def failed_sources(self) -> list[SourceStatus]:
@@ -57,7 +65,7 @@ def collect(
         status = SourceStatus(source=collector.name, ok=True)
         try:
             result = collector.collect(ctx)
-            new_items = store_new(result.items, storage, dedup, now, config)
+            new_items = store_new(result.items, storage, dedup, now, config, report.bumped_ids)
             status.fetched, status.new = len(result.items), len(new_items)
             status.duplicates = status.fetched - status.new
             if result.errors:
@@ -79,18 +87,43 @@ def collect(
         report.sources.append(status)
     storage.prune(config.storage.retention_days, now)
     report.duration_s = time.monotonic() - run_start
+    report.timings["collect"] = report.duration_s
+    return report
+
+
+def score(report: RunReport, config: Config, storage: Storage, scorer: Scorer,
+          now: datetime) -> RunReport:
+    """Score new items, and re-score older items whose mention count grew."""
+    start = time.monotonic()
+    new_ids = {i.id for i in report.new_items}
+    mentions = storage.mentions(new_ids | report.bumped_ids)
+    scores = scorer.score(report.new_items, mentions)
+    for item, sc in zip(report.new_items, scores):
+        storage.save_score(item.id, sc, now)
+    report.scored = list(zip(report.new_items, scores))
+
+    rows = storage.load_items(report.bumped_ids - new_ids)
+    if rows:
+        items = [row_to_item(r) for r in rows]
+        known = {r["id"]: Sentiment(r["sentiment_label"], r["sentiment"], 1.0)
+                 for r in rows if r["sentiment"] is not None}
+        for item, sc, row in zip(items, scorer.score(items, mentions, known), rows):
+            storage.save_score(item.id, sc, now)
+            report.rescored.append((item, sc, row["score"]))
+    report.timings["score"] = time.monotonic() - start
+    report.timings["sentiment_model"] = scorer.last_model_seconds
     return report
 
 
 def store_new(items: list[Item], storage: Storage, dedup: Deduplicator, now: datetime,
-              config: Config) -> list[Item]:
+              config: Config, bumped: set[str] | None = None) -> list[Item]:
     """Store non-duplicate items; merge duplicates into their canonical item."""
     new_items: list[Item] = []
     for item in items:
         canonical = dedup.find_duplicate(item)
         if canonical is not None:
-            if canonical != item.id:
-                storage.add_mention(canonical, item, now)
+            if canonical != item.id and storage.add_mention(canonical, item, now) and bumped is not None:
+                bumped.add(canonical)
             continue
         if storage.insert_item(item, now, config.dedup.min_text_chars_for_hash):
             dedup.remember(item)

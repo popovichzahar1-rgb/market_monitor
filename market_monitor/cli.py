@@ -1,7 +1,8 @@
 """Command line entry point.
 
-    python -m market_monitor run [--dry-run]     collect (later: score, alert)
+    python -m market_monitor run [--dry-run]     collect, score (later: alert)
     python -m market_monitor status              print source health
+    python -m market_monitor explain "headline"  show how a headline would be scored
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from market_monitor.collectors.sec_edgar import configure_http as configure_sec_
 from market_monitor.config import Config, Secrets, load_config
 from market_monitor.http import HttpClient
 from market_monitor.logging_setup import setup_logging
+from market_monitor.models import Item
+from market_monitor.scoring import Scorer
 from market_monitor.notify.base import ConsoleNotifier, Notifier
 from market_monitor.notify.formatting import format_run_preview
 from market_monitor import pipeline
@@ -35,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--dry-run", action="store_true", help="print messages instead of sending")
     run.add_argument("--only", nargs="*", help="run only these sources (e.g. rss)")
     sub.add_parser("status", help="print source health")
+    explain = sub.add_parser("explain", help="score a headline and show why")
+    explain.add_argument("title")
+    explain.add_argument("--text", default="")
+    explain.add_argument("--source", default="manual")
+    explain.add_argument("--tags", nargs="*", default=[])
     return parser
 
 
@@ -61,8 +69,12 @@ def cmd_run(args: argparse.Namespace, config: Config, secrets: Secrets, now: dat
             config, secrets, storage, client, now,
             collectors=build_collectors(config, only=args.only),
         )
-        make_notifier(args.dry_run).send(format_run_preview(report, config.tz))
-    log.info("run finished in %.1fs, %d new items", report.duration_s, len(report.new_items))
+        pipeline.score(report, config, storage, Scorer(config), now)
+        make_notifier(args.dry_run).send(format_run_preview(report, config))
+    log.info(
+        "run finished: %d new items; timings %s", len(report.new_items),
+        ", ".join(f"{k}={v:.2f}s" for k, v in report.timings.items()),
+    )
     return 0 if len(report.failed_sources) < len(report.sources) or not report.sources else 1
 
 
@@ -74,6 +86,23 @@ def cmd_status(args: argparse.Namespace, config: Config, now: datetime) -> int:
             state = "OK " if h.ok else "ERR"
             print(f"{state} {h.source:<12} last={h.last_run:%Y-%m-%d %H:%M}Z new24h={h.new_24h}"
                   + (f" error={h.last_error}" if h.last_error else ""))
+    return 0
+
+
+def cmd_explain(args: argparse.Namespace, config: Config, now: datetime) -> int:
+    item = Item(source=args.source, published_at=now, title=args.title, text=args.text,
+                url="https://example.invalid/explain", tags=args.tags)
+    scorer = Scorer(config)
+    (result,) = scorer.score([item])
+    print(f"score:     {result.score}")
+    print(f"topic:     {result.topic}")
+    print(f"flags:     {', '.join(result.flags) or '-'}")
+    tone = f"{result.sentiment_label} ({result.sentiment:+.2f}) via {result.sentiment_model}" \
+        if result.sentiment is not None else f"not run (below prefilter {config.scoring.prefilter_min})"
+    print(f"sentiment: {tone}")
+    print("reasons:")
+    for reason in result.reasons or ["(nothing matched)"]:
+        print(f"  {reason}")
     return 0
 
 
@@ -93,6 +122,8 @@ def main(argv: list[str] | None = None, http: HttpClient | None = None,
         return cmd_run(args, config, secrets, now, http=http)
     if args.command == "status":
         return cmd_status(args, config, now)
+    if args.command == "explain":
+        return cmd_explain(args, config, now)
     return 2
 
 

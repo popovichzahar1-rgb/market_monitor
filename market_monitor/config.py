@@ -148,6 +148,81 @@ class StorageConfig(_Strict):
     retention_days: int = 30
 
 
+class ScoringRule(_Strict):
+    """Weighted keyword rule. Phrases are case-insensitive whole words; `*` is a suffix
+    wildcard ("sanction*"). `any` must match; if `also_any` is set, one of those must
+    match too; if `tags_any` is set, the item must carry one of those tags."""
+
+    name: str
+    weight: float
+    any: list[str]
+    also_any: list[str] = Field(default_factory=list)
+    tags_any: list[str] = Field(default_factory=list)
+    title_only: bool = False
+    topic: str | None = None
+    # Marks an "urgent" category: such items may be sent as alerts (see alerts config).
+    alert: bool = False
+
+
+class TopicConfig(_Strict):
+    label: str
+    tags: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+
+
+class SentimentConfig(_Strict):
+    # auto: ONNX FinBERT if the model is present, otherwise the built-in lexicon.
+    backend: Literal["auto", "onnx", "lexicon", "none"] = "auto"
+    model_dir: str = "models/finbert-onnx"
+    max_length: int = 96
+    batch_size: int = 16
+    threads: int = 2
+    # Up to `weight` points for strong (positive or negative) tone, plus
+    # `negative_extra` when clearly negative: shocks tend to move markets more.
+    weight: float = 10.0
+    negative_extra: float = 5.0
+
+
+class DataScoringConfig(_Strict):
+    price_move_base: float = 55.0
+    price_move_per_pct: float = 4.0  # per % beyond the collector threshold
+    fred_release_base: float = 35.0
+    fred_major_series: list[str] = Field(
+        default_factory=lambda: ["CPIAUCSL", "CPILFESL", "PCEPILFE", "PAYEMS"])
+    fred_major_bonus: float = 25.0
+    fred_move_base: float = 50.0
+    calendar_base: float = 10.0
+    quake_base: float = 35.0
+    quake_per_magnitude: float = 20.0  # per magnitude unit above 6.5
+    quake_alert_bonus: dict[str, float] = Field(
+        default_factory=lambda: {"orange": 15.0, "red": 30.0})
+    quake_tsunami_bonus: float = 10.0
+    sec_8k_base: float = 50.0
+    sec_periodic_base: float = 35.0
+    sec_major_8k_items: list[str] = Field(
+        default_factory=lambda: ["1.03", "1.05", "2.02", "2.06", "3.01", "4.02", "5.01"])
+    sec_major_bonus: float = 25.0
+
+
+class ScoringConfig(_Strict):
+    # Only items whose rule score reaches this are sent to the sentiment model.
+    prefilter_min: float = 25.0
+    rules: list[ScoringRule] = Field(default_factory=list)
+    topics: dict[str, TopicConfig] = Field(default_factory=dict)
+    default_topic: str = "other"
+    # Points by source; key matches the source exactly or as a prefix ("gdelt" -> "gdelt:*").
+    source_weights: dict[str, float] = Field(default_factory=dict)
+    mentions_bonus_per_source: float = 6.0
+    mentions_bonus_max: float = 18.0
+    asset_keywords: dict[str, list[str]] = Field(default_factory=dict)
+    asset_bonus: float = 10.0
+    region_keywords: dict[str, list[str]] = Field(default_factory=dict)
+    region_bonus: float = 5.0
+    watchlist_bonus: float = 25.0
+    data: DataScoringConfig = Field(default_factory=DataScoringConfig)
+    sentiment: SentimentConfig = Field(default_factory=SentimentConfig)
+
+
 class Config(_Strict):
     timezone: str = "Europe/Bratislava"
     digest_time: str = "20:00"
@@ -158,6 +233,7 @@ class Config(_Strict):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
 
     @field_validator("timezone")
     @classmethod

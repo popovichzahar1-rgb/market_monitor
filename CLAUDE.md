@@ -33,6 +33,17 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   Duplicates increment `mentions` of the canonical item instead of being stored.
 - Per-host politeness: `http.set_host_interval` (GDELT 5.5 s, SEC 0.15 s),
   `http.set_host_headers` (SEC User-Agent with contact e-mail).
+- `scoring/`: `rules.py` (keyword rules, source weights, data magnitudes, bonuses;
+  every point recorded in `reasons`), `sentiment.py` (ONNX FinBERT, lazy-loaded,
+  only for items with rule score >= `prefilter_min` and not `data`; lexicon
+  fallback; a model failure degrades to lexicon, never fails the run),
+  `keywords.py` (lowercase phrase = any case, uppercase letter = case-sensitive,
+  `*` suffix wildcard). All weights live in config.yaml, not in code.
+  Rules with `alert: true` put their name into `flags` (urgent categories).
+- Re-scoring: when duplicates raise an older item's `mentions`, it is re-scored
+  (stored sentiment reused). The same duplicate URL never counts twice.
+- FinBERT model: `scripts/export_finbert.py` → `models/finbert-onnx/` (gitignored,
+  cached in CI). Runtime deps are the optional `[ml]` extra (onnxruntime, tokenizers).
 - `storage.py`: SQLite, schema via append-only `MIGRATIONS` list (`PRAGMA user_version`).
   Never edit an existing migration. Journal mode DELETE (single file, CI-friendly).
 - `config.py`: pydantic models with `extra="forbid"`; config.yaml typos must fail.
@@ -42,3 +53,6 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   `route` in tests/conftest.py); fixtures in `tests/fixtures/`.
 - Every collector and scoring rule gets fixture-based tests.
 - `python -m market_monitor run --dry-run` prints Telegram messages instead of sending.
+- `python -m market_monitor explain "headline" [--source rss:fed] [--tags crypto]`
+  shows score breakdown; add a parametrized case to tests/test_scoring.py when
+  changing rules.
