@@ -130,6 +130,8 @@ class WatchItem(_Strict):
     sector: str = ""
     peers: list[str] = Field(default_factory=list)
     suppliers: list[str] = Field(default_factory=list)
+    # Phrases that make news "related via sector" (e.g. [oil price, refining]).
+    sector_keywords: list[str] = Field(default_factory=list)
 
     @field_validator("ticker")
     @classmethod
@@ -219,6 +221,8 @@ class ScoringConfig(_Strict):
     region_keywords: dict[str, list[str]] = Field(default_factory=dict)
     region_bonus: float = 5.0
     watchlist_bonus: float = 25.0
+    # Peer / supplier / sector news of a watchlist company (context, no alert flag).
+    watchlist_related_bonus: float = 8.0
     data: DataScoringConfig = Field(default_factory=DataScoringConfig)
     sentiment: SentimentConfig = Field(default_factory=SentimentConfig)
 
@@ -258,6 +262,10 @@ class AlertsConfig(_Strict):
 class DigestConfig(_Strict):
     min_score: float = 30.0
     per_topic: int = 5
+    # Watchlist block, per company.
+    company_news: int = 3
+    company_related: int = 3
+    company_related_min_score: float = 30.0
     # Window: since the previous digest, but at most this many hours back.
     max_window_hours: int = 36
     calendar_days: int = 7

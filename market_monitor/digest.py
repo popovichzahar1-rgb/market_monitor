@@ -11,10 +11,26 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from market_monitor.alerts import AlertView, view_from_row
-from market_monitor.config import Config
+from market_monitor.collectors.sec_edgar import LATEST_KEY, PROFILE_KEY
+from market_monitor.config import Config, WatchItem
 from market_monitor.storage import SourceHealth, Storage, from_iso, iso
+from market_monitor.watchlist import WatchlistMatcher
 
 LAST_DIGEST_KEY = "digest:last_sent_at"
+
+
+@dataclass
+class CompanyBlock:
+    watch: WatchItem
+    profile: dict = field(default_factory=dict)
+    latest_filings: dict = field(default_factory=dict)  # form -> {date, items, url}
+    filings: list[AlertView] = field(default_factory=list)  # SEC filings in the window
+    news: list[AlertView] = field(default_factory=list)  # news about the company itself
+    related: list[tuple[AlertView, list[str]]] = field(default_factory=list)  # peers/suppliers/sector
+
+    @property
+    def empty(self) -> bool:
+        return not (self.filings or self.news or self.related)
 
 
 @dataclass
@@ -29,7 +45,7 @@ class DigestData:
     market: list[str] = field(default_factory=list)
     calendar: list[tuple[str, str]] = field(default_factory=list)
     # None when the watchlist is empty: the block is omitted entirely.
-    watchlist: dict[str, list[AlertView]] | None = None
+    watchlist: list[CompanyBlock] | None = None
     sources: list[SourceHealth] = field(default_factory=list)
 
 
@@ -112,13 +128,37 @@ def build_digest(config: Config, storage: Storage, now: datetime) -> DigestData:
             bucket.append(view)
 
     if config.watchlist:
-        data.watchlist = {}
-        entities = {r["id"]: json.loads(r["entities"]) for r in rows}
-        for watch in config.watchlist:
-            data.watchlist[watch.ticker] = [
-                v for v in views if watch.ticker in entities.get(v.item_id, [])][:cfg.per_topic]
+        data.watchlist = company_blocks(config, storage, rows, views)
 
     data.market = market_snapshot(config, storage)
     data.calendar = upcoming_calendar(config, storage, now)
     data.sources = storage.source_health(now)
     return data
+
+
+def company_blocks(config: Config, storage: Storage, rows: list, views: list[AlertView]) -> list[CompanyBlock]:
+    """Per-company context. Matching is redone here (not only read from stored
+    entities) so a company added with /watch today gets today's news too."""
+    cfg = config.digest
+    matcher = WatchlistMatcher(config.watchlist)
+    blocks = {w.ticker: CompanyBlock(watch=w) for w in config.watchlist}
+    for ticker, block in blocks.items():
+        if raw := storage.kv_get(PROFILE_KEY.format(ticker=ticker)):
+            block.profile = json.loads(raw)
+        if raw := storage.kv_get(LATEST_KEY.format(ticker=ticker)):
+            block.latest_filings = json.loads(raw)
+    by_id = {r["id"]: r for r in rows}
+    for view in views:  # sorted by score
+        row = by_id[view.item_id]
+        m = matcher.match(view.title, view.text, json.loads(row["entities"]))
+        for ticker in m.direct:
+            block = blocks[ticker]
+            if view.source == "sec_edgar":
+                block.filings.append(view)
+            elif len(block.news) < cfg.company_news:
+                block.news.append(view)
+        for ticker, kinds in m.related.items():
+            block = blocks[ticker]
+            if view.score >= cfg.company_related_min_score and len(block.related) < cfg.company_related:
+                block.related.append((view, kinds))
+    return list(blocks.values())

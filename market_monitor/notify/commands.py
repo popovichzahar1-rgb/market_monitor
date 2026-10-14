@@ -93,6 +93,8 @@ class CommandProcessor:
             "/watch": self.cmd_watch, "/unwatch": self.cmd_unwatch, "/topics": self.cmd_topics,
             "/threshold": self.cmd_threshold, "/digest_time": self.cmd_digest_time,
             "/status": self.cmd_status,
+            "/peers": self.cmd_peers, "/suppliers": self.cmd_suppliers,
+            "/sector": self.cmd_sector, "/alias": self.cmd_alias,
         }.get(command)
         if handler is None:
             return "Невідома команда. /start — список команд."
@@ -123,15 +125,22 @@ class CommandProcessor:
             except Exception as exc:
                 log.warning("ticker lookup failed: %s", exc)
         name, cik = found if found else ("", None)
+        extra_aliases = split_list(" ".join(args[1:]), spaces=False)
+        aliases = [a for a in [short_company_name(name), *extra_aliases] if a]
         item = WatchItem(ticker=ticker, name=name, cik=str(cik) if cik else None,
-                         aliases=[a for a in [short_company_name(name)] if a])
+                         aliases=list(dict.fromkeys(aliases)))
         if not self.settings.add_watch(item):
             return f"{ticker} уже є у списку. /list — переглянути."
         label = f"{ticker} ({fmt.escape(name)})" if name else ticker
         note = "" if found else (
             "\nℹ️ Тикер не знайдено в базі SEC (можливо, компанія не з США): "
-            "новини шукатимуться за тикером, документів SEC не буде.")
-        return f"✅ Додано {label}. Новини про компанію з'являтимуться в алертах і дайджесті.{note}"
+            "новини шукатимуться за тикером і назвами, документів SEC не буде. "
+            f"Додайте назву: /alias {ticker} Назва компанії")
+        if item.aliases:
+            note += f"\nШукаю в новинах: {fmt.escape(', '.join([ticker, *item.aliases]))}"
+        return (f"✅ Додано {label}. Новини про компанію з'являтимуться в алертах і дайджесті.{note}"
+                f"\n\nЩоб бачити пов'язані події: /peers {ticker} …, /suppliers {ticker} …, "
+                f"/sector {ticker} …")
 
     def cmd_unwatch(self, args: list[str]) -> str:
         if not args:
@@ -178,6 +187,42 @@ class CommandProcessor:
 
     def cmd_status(self, args: list[str]) -> str:
         return self.status()
+
+    def _set_list(self, args: list[str], field: str, label: str, example: str) -> str:
+        if not args:
+            return f"Формат: /{example}\nОчистити: /{example.split()[0]} {example.split()[1]} -"
+        ticker = args[0].upper()
+        raw = " ".join(args[1:]).strip()
+        # Kept as typed: "MSFT" (uppercase) is matched as a ticker, "Foxconn" as a name.
+        values = [] if raw in ("", "-") else split_list(raw, spaces=field in ("peers", "suppliers"))
+        updated = self.settings.update_watch(ticker, **{field: values})
+        if updated is None:
+            return f"{fmt.escape(ticker)} немає у списку. Спершу: /watch {fmt.escape(ticker)}"
+        shown = ", ".join(values) if values else "—"
+        return f"✅ {fmt.escape(ticker)}: {label} — {fmt.escape(shown)}"
+
+    def cmd_peers(self, args: list[str]) -> str:
+        return self._set_list(args, "peers", "конкуренти", "peers AAPL MSFT, GOOGL, Samsung")
+
+    def cmd_suppliers(self, args: list[str]) -> str:
+        return self._set_list(args, "suppliers", "постачальники", "suppliers AAPL TSM, Foxconn")
+
+    def cmd_sector(self, args: list[str]) -> str:
+        return self._set_list(args, "sector_keywords", "ключові слова сектору",
+                              "sector XOM oil price, refining, OPEC")
+
+    def cmd_alias(self, args: list[str]) -> str:
+        return self._set_list(args, "aliases", "назви для пошуку", "alias AAPL Apple, iPhone maker")
+
+
+def split_list(raw: str, spaces: bool = True) -> list[str]:
+    """Split by commas if present; otherwise by spaces (tickers: 'MSFT GOOGL') or,
+    with spaces=False, keep the whole text as one phrase ('iPhone maker')."""
+    if "," in raw:
+        parts = raw.split(",")
+    else:
+        parts = raw.split() if spaces else [raw]
+    return list(dict.fromkeys(p.strip() for p in parts if p.strip()))
 
 
 _SUFFIX_RE = re.compile(r"[,.]?\s+(inc|corp|corporation|co|ltd|plc|nv|n\.v|sa|ag|se|holdings?|group|company)\.?$",

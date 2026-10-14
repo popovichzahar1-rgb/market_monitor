@@ -55,6 +55,18 @@ class Settings:
         self._set("watchlist", [w.model_dump() for w in [*current, item]])
         return True
 
+    def update_watch(self, ticker: str, **fields: list[str]) -> WatchItem | None:
+        """Replace list fields (peers, suppliers, sector_keywords, aliases) of one company."""
+        current = self.watchlist()
+        updated = None
+        for index, w in enumerate(current):
+            if w.ticker == ticker.upper():
+                updated = WatchItem.model_validate({**w.model_dump(), **fields})
+                current[index] = updated
+        if updated is not None:
+            self._set("watchlist", [w.model_dump() for w in current])
+        return updated
+
     def remove_watch(self, ticker: str) -> bool:
         ticker = ticker.upper()
         current = self.watchlist()

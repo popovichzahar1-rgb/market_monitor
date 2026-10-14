@@ -169,13 +169,8 @@ def format_digest(data: "DigestData", config: Config) -> list[str]:
     watch: list[str] = []
     if data.watchlist is not None:
         watch += ["", "💼 <b>Мій список відстеження</b>"]
-        for ticker, views in data.watchlist.items():
-            watch.append(f"<b>{escape(ticker)}</b>")
-            if not views:
-                watch.append("    нічого нового")
-            for view in views:
-                watch.append(f"    • <b>{view.score:.0f}</b> "
-                             f"<a href=\"{escape(view.url)}\">{escape(view.title)}</a>")
+        for block in data.watchlist:
+            watch += format_company_block(block, config)
 
     footer = ["", format_sources_health(data.sources)]
     if data.rate_limited:
@@ -187,6 +182,49 @@ def format_digest(data: "DigestData", config: Config) -> list[str]:
     return ["\n".join(header + body + watch + footer)]
 
 
+RELATION_LABELS = {"peer": "конкурент", "supplier": "постачальник", "sector": "сектор"}
+
+
+def relation_label(kind: str) -> str:
+    """'peer:MSFT' -> 'конкурент MSFT'; 'sector' -> 'сектор'."""
+    name, _, target = kind.partition(":")
+    label = RELATION_LABELS.get(name, name)
+    return f"{label} {target}".strip()
+
+
+def format_company_block(block, config: Config) -> list[str]:
+    w = block.watch
+    name = w.name or block.profile.get("name", "")
+    sector = w.sector or block.profile.get("sic_description", "").capitalize()
+    head = f"<b>{escape(w.ticker)}</b>"
+    if name:
+        head += f" · {escape(name)}"
+    if sector:
+        head += f" · <i>{escape(sector)}</i>"
+    lines = ["", head]
+    if block.latest_filings:
+        parts = []
+        for form in ("8-K", "10-Q", "10-K", "6-K", "20-F"):
+            f = block.latest_filings.get(form)
+            if f and f.get("date"):
+                date = f"{f['date'][8:10]}.{f['date'][5:7]}.{f['date'][2:4]}"
+                parts.append(f"<a href=\"{escape(f['url'])}\">{form} {date}</a>")
+        if parts:
+            lines.append("    📄 Останні звіти SEC: " + " · ".join(parts))
+    for view in block.filings:
+        lines.append(f"    📄 <b>{view.score:.0f}</b> <a href=\"{escape(view.url)}\">{escape(view.title)}</a>")
+    for view in block.news:
+        lines.append(f"    📰 <b>{view.score:.0f}</b> {tone_icon(view.sentiment_label)} "
+                     f"<a href=\"{escape(view.url)}\">{escape(view.title)}</a>")
+    for view, kinds in block.related:
+        why = ", ".join(relation_label(k) for k in kinds)
+        lines.append(f"    🔗 <b>{view.score:.0f}</b> <i>[{escape(why)}]</i> "
+                     f"<a href=\"{escape(view.url)}\">{escape(view.title)}</a>")
+    if block.empty:
+        lines.append("    нічого нового за період")
+    return lines
+
+
 # ---- bot command replies --------------------------------------------------------
 
 HELP = """<b>Market Monitor</b> — збирає й фільтрує новини, що впливають на ринки.
@@ -195,6 +233,10 @@ HELP = """<b>Market Monitor</b> — збирає й фільтрує новин�
 /list — мій список відстеження
 /watch TICKER — додати компанію (напр. /watch AAPL)
 /unwatch TICKER — прибрати компанію
+/peers AAPL MSFT, GOOGL — конкуренти
+/suppliers AAPL TSM, Foxconn — постачальники
+/sector XOM oil price, refining — ключові слова сектору
+/alias AAPL Apple, iPhone maker — інші назви компанії
 /topics — теми; /topics off crypto · /topics on crypto
 /threshold — пороги алертів; /threshold 75 · /threshold urgent 60 · /threshold priority 65
 /digest_time — час дайджесту; /digest_time 19:30
@@ -210,6 +252,14 @@ def format_watchlist(config: Config) -> str:
     for w in config.watchlist:
         name = f" — {escape(w.name)}" if w.name else ""
         lines.append(f"• <b>{escape(w.ticker)}</b>{name}")
+        details = [
+            ("псевдоніми", w.aliases), ("конкуренти", w.peers),
+            ("постачальники", w.suppliers), ("сектор", w.sector_keywords),
+        ]
+        for label, values in details:
+            if values:
+                lines.append(f"    {label}: {escape(', '.join(values))}")
+    lines.append("\nДодати зв'язки: /peers, /suppliers, /sector, /alias (див. /start)")
     return "\n".join(lines)
 
 

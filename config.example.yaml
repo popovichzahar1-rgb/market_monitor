@@ -23,20 +23,23 @@ watchlist:
     aliases: [Apple, iPhone maker]
     cik: "0000320193"
     sector: consumer electronics
-    peers: [MSFT, GOOGL]
+    peers: [MSFT, GOOGL, Samsung]
     suppliers: [TSM, Foxconn]
+    sector_keywords: [smartphone sales, App Store]
   - ticker: ASML          # example (EU-listed, also US ADR)
     name: ASML Holding
     aliases: [ASML]
     sector: semiconductor equipment
     peers: [AMAT, LRCX]
     suppliers: [Zeiss]
+    sector_keywords: [chip export controls, lithography]
   - ticker: XOM           # example
     name: Exxon Mobil
     aliases: [ExxonMobil, Exxon]
     cik: "0000034088"
     sector: oil & gas
-    peers: [CVX, SHEL]
+    peers: [CVX, SHEL, Chevron, Shell]
+    sector_keywords: [oil price*, crude, refining, OPEC]
 
 http:
   timeout_s: 20

@@ -68,11 +68,11 @@ def test_digest_watchlist_block_and_muted_topics(storage):
     add(storage, 1, 70, "equities", t, entities=["AAPL"])
     add(storage, 2, 90, "crypto", t)
     data = build_digest(cfg, storage, EVENING)
-    assert [v.title for v in data.watchlist["AAPL"]] == ["Story 1"]
-    assert data.watchlist["XOM"] == []
+    aapl, xom = data.watchlist
+    assert [v.title for v in aapl.news] == ["Story 1"] and xom.empty
     assert "crypto" not in data.items_by_topic
     (text,) = format_digest(data, cfg)
-    assert "💼 <b>Мій список відстеження</b>" in text and "нічого нового" in text
+    assert "💼 <b>Мій список відстеження</b>" in text and "нічого нового за період" in text
     assert "Вимкнені теми: Крипта" in text
 
 

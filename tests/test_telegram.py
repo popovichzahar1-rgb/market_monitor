@@ -180,3 +180,42 @@ def test_cli_dry_run_never_calls_telegram_send(make_http, tmp_path, telegram_env
     assert fake.sent == []
     out = capsys.readouterr().out
     assert "Список відстеження порожній" in out and "🚨" in out
+
+
+def test_link_commands(make_http, storage):
+    fake = FakeTelegram()
+    fake.add_message("/watch AAPL iPhone maker")
+    fake.add_message("/peers AAPL MSFT, Samsung Electronics")
+    fake.add_message("/suppliers AAPL TSM Foxconn")
+    fake.add_message("/sector AAPL smartphone sales, App Store")
+    fake.add_message("/alias AAPL Apple, iPhone maker, Cupertino")
+    fake.add_message("/peers XOM CVX")
+    fake.add_message("/suppliers AAPL -")
+    fake.add_message("/list")
+    processor(make_http, storage, fake, lookup=lambda t: ("Apple Inc.", 320193)).process()
+    replies = [p["text"] for p in fake.sent]
+    assert "Шукаю в новинах: AAPL, Apple, iPhone maker" in replies[0]
+    assert replies[1] == "✅ AAPL: конкуренти — MSFT, Samsung Electronics"
+    assert replies[2] == "✅ AAPL: постачальники — TSM, Foxconn"
+    assert "XOM немає у списку" in replies[5]
+    assert replies[6] == "✅ AAPL: постачальники — —"
+    assert "конкуренти: MSFT, Samsung Electronics" in replies[7]
+    (w,) = Settings(REAL, storage).effective().watchlist
+    assert w.sector_keywords == ["smartphone sales", "App Store"]
+    assert w.aliases == ["Apple", "iPhone maker", "Cupertino"] and w.suppliers == []
+
+
+def test_cli_watch_then_run_links_news_and_sec(make_http, tmp_path, telegram_env, monkeypatch, now):
+    monkeypatch.setenv("SEC_CONTACT_EMAIL", "me@example.com")
+    fake = FakeTelegram()
+    fake.add_message("/watch AAPL")
+    db = str(tmp_path / "state.db")
+    cli.main(["--db", db, "run", "--no-digest"], http=make_http(e2e_handler(fake), retries=0), now=now)
+    assert fake.sent[0]["text"].startswith("✅ Додано AAPL (Apple Inc.)")
+    fake.calls.clear()
+    cli.main(["--db", db, "digest", "--force"], http=make_http(e2e_handler(fake), retries=0),
+             now=now + timedelta(hours=1))
+    (digest,) = [p["text"] for p in fake.sent]
+    assert "<b>AAPL</b> · Apple Inc. · <i>Electronic computers</i>" in digest
+    assert "AAPL: SEC 8-K filed — 2.02 results of operations (earnings)" in digest
+    assert "Останні звіти SEC" in digest

@@ -1,4 +1,4 @@
-{"cik": "320193", "name": "Apple Inc.", "tickers": ["AAPL"],
+{"cik": "320193", "name": "Apple Inc.", "tickers": ["AAPL"], "sicDescription": "ELECTRONIC COMPUTERS", "exchanges": ["Nasdaq"],
  "filings": {"recent": {
    "accessionNumber": ["0000320193-26-000101", "0000320193-26-000099", "0000320193-26-000090", "0000320193-26-000050"],
    "filingDate": ["2026-10-12", "2026-10-10", "2026-10-09", "2026-08-01"],

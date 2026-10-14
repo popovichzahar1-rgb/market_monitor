@@ -141,6 +141,11 @@ def rule_score(item: Item, cfg: ScoringConfig, watch_tickers: set[str],
     if watched:
         result.add(cfg.watchlist_bonus, f"watchlist:{','.join(watched)}")
         result.flags.append("watchlist")
+    else:
+        related = {t: k for t, k in (item.meta.get("related") or {}).items() if t in watch_tickers}
+        if related:
+            label = ",".join(f"{t}({'/'.join(k)})" for t, k in sorted(related.items()))
+            result.add(cfg.watchlist_related_bonus, f"related:{label}")
 
     if result.topic is None:
         result.topic = detect_topic(item, cfg)

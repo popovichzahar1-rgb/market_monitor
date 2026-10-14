@@ -31,6 +31,9 @@ TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
 TICKERS_KEY = "sec:company_tickers"
+LATEST_KEY = "sec:latest:{ticker}"    # latest filing per form, for the digest
+PROFILE_KEY = "sec:profile:{ticker}"  # name, SIC industry, exchanges
+SNAPSHOT_FORMS = ("8-K", "10-Q", "10-K", "6-K", "20-F")
 
 # Human-readable meaning of the most market-relevant 8-K items.
 FORM_8K_ITEMS = {
@@ -148,6 +151,33 @@ def parse_submissions(
     return items
 
 
+def company_snapshot(payload: dict, cik: int) -> tuple[dict, dict]:
+    """(latest filing per form regardless of age, company profile)."""
+    recent = (payload.get("filings") or {}).get("recent") or {}
+    latest: dict[str, dict] = {}
+    for i, form in enumerate(recent.get("form") or []):
+        form = form.upper()
+        if form not in SNAPSHOT_FORMS or form in latest:
+            continue  # SEC lists newest first, so the first hit is the latest
+
+        def col(name: str) -> str:
+            values = recent.get(name) or []
+            return values[i] if i < len(values) and values[i] is not None else ""
+
+        latest[form] = {
+            "date": col("filingDate"),
+            "items": col("items"),
+            "url": ARCHIVE_URL.format(cik=cik, accession=col("accessionNumber").replace("-", ""),
+                                      document=col("primaryDocument")),
+        }
+    profile = {
+        "name": payload.get("name", ""),
+        "sic_description": payload.get("sicDescription", ""),
+        "exchanges": payload.get("exchanges") or [],
+    }
+    return latest, profile
+
+
 @register
 class SecEdgarCollector(Collector):
     name = "sec_edgar"
@@ -177,6 +207,9 @@ class SecEdgarCollector(Collector):
                     cik = entry["cik"]
                 payload = json_or_error(ctx.http.get(SUBMISSIONS_URL.format(cik=f"{cik:010d}")))
                 items = parse_submissions(payload, watch, cik, cfg, ctx.now)
+                latest, profile = company_snapshot(payload, cik)
+                ctx.state.kv_set(LATEST_KEY.format(ticker=watch.ticker), json.dumps(latest))
+                ctx.state.kv_set(PROFILE_KEY.format(ticker=watch.ticker), json.dumps(profile))
                 log.info("sec %s: %d recent filings", watch.ticker, len(items))
                 result.items.extend(items)
             except Exception as exc:

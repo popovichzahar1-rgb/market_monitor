@@ -38,6 +38,7 @@ from market_monitor.scoring import Scorer
 from market_monitor.scoring.sentiment import load_sentiment
 from market_monitor.settings import Settings
 from market_monitor.storage import Storage, iso
+from market_monitor.watchlist import WatchlistMatcher
 
 log = logging.getLogger("market_monitor")
 
@@ -166,8 +167,10 @@ def cmd_run(app: App) -> int:
         log.info("dry-run: bot commands are not consumed")
     app.process_commands()
     config = app.config  # includes changes made by commands just now
+    matcher = WatchlistMatcher(config.watchlist)
     report = pipeline.collect(config, app.secrets, app.storage, app.http, app.now,
-                              collectors=build_collectors(config, only=app.args.only))
+                              collectors=build_collectors(config, only=app.args.only),
+                              enrich=matcher.enrich if matcher else None)
     pipeline.score(report, config, app.storage, Scorer(config), app.now)
     outcome = AlertManager(config, app.storage, app.notifier, app.dry_run).process(
         alert_views(report, app.storage), app.now)

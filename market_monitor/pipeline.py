@@ -6,6 +6,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Callable
 
 from market_monitor.collectors import CollectContext, Collector, build_collectors
 from market_monitor.config import Config, Secrets
@@ -55,7 +56,10 @@ def collect(
     http: HttpClient,
     now: datetime,
     collectors: list[Collector] | None = None,
+    enrich: Callable[[Item], Item] | None = None,
 ) -> RunReport:
+    """Collect from all sources. `enrich` (e.g. watchlist matching) runs on every
+    item before dedup and storage, so stored entities are complete."""
     report = RunReport(started_at=now)
     run_start = time.monotonic()
     ctx = CollectContext(http=http, config=config, secrets=secrets, state=storage, now=now)
@@ -65,6 +69,8 @@ def collect(
         status = SourceStatus(source=collector.name, ok=True)
         try:
             result = collector.collect(ctx)
+            if enrich is not None:
+                result.items = [enrich(i) for i in result.items]
             new_items = store_new(result.items, storage, dedup, now, config, report.bumped_ids)
             status.fetched, status.new = len(result.items), len(new_items)
             status.duplicates = status.fetched - status.new

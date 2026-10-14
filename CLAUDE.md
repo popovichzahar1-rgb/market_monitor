@@ -57,6 +57,13 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   boundaries (each HTML tag must open and close within one line).
   `notify/commands.py`: getUpdates, allowlist = TELEGRAM_CHAT_ID only, offset saved
   per update; dry-run never saves the offset.
+- `watchlist.py`: `WatchlistMatcher` (names/aliases any case; tickers case-sensitive,
+  common-word/short tickers only as `$T`, `(NYSE: T)`, `NYSE:T`). Direct match →
+  `item.entities`; peers/suppliers/sector_keywords → `item.meta["related"]`
+  (bonus `watchlist_related_bonus`, never the `watchlist` flag). Runs as the
+  `enrich` hook in `pipeline.collect` and again live in `digest.company_blocks`.
+- SEC collector also stores `sec:latest:<T>` (latest filing per form, any age) and
+  `sec:profile:<T>` (name, SIC industry) for the digest company block.
 - Ukrainian plurals via `formatting.plural` (1 джерело, 2 джерела, 5 джерел).
 - `storage.py`: SQLite, schema via append-only `MIGRATIONS` list (`PRAGMA user_version`).
   Never edit an existing migration. Journal mode DELETE (single file, CI-friendly).
