@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 
 from market_monitor.config import Config
+from market_monitor.feedback import buttons_for
 from market_monitor.notify.base import Notifier
 from market_monitor.notify.formatting import format_alert, format_quiet_batch
 from market_monitor.notify.telegram import TelegramError
@@ -145,7 +146,8 @@ class AlertManager:
                 outcome.rate_limited.append(view)
                 continue
             try:
-                message_id = self.notifier.send(format_alert(view, self.config))
+                message_id = self.notifier.send(format_alert(view, self.config),
+                                                buttons_for([view.item_id]))
             except TelegramError as exc:
                 log.error("alert send failed, re-queued: %s", exc)
                 self.storage.record_alert(view.item_id, "queued", view.reason, view.score, now)
@@ -166,8 +168,10 @@ class AlertManager:
         if not rows:
             return
         views = [view_from_row(r) for r in rows]
+        shown = views[: self.config.alerts.quiet_batch_max]
         try:
-            message_id = self.notifier.send(format_quiet_batch(views, self.config))
+            message_id = self.notifier.send(format_quiet_batch(views, self.config),
+                                            buttons_for([v.item_id for v in shown]))
         except TelegramError as exc:
             log.error("queued alerts send failed, will retry: %s", exc)
             return

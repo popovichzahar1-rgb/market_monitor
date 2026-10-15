@@ -265,7 +265,10 @@ class Storage:
     def prune(self, retention_days: int, now: datetime) -> int:
         cutoff = iso(now - timedelta(days=retention_days))
         with self.conn:
-            removed = self.conn.execute("DELETE FROM items WHERE fetched_at < ?", (cutoff,)).rowcount
+            # Items with a 👍/👎 vote are kept: they are the tuning history.
+            removed = self.conn.execute(
+                "DELETE FROM items WHERE fetched_at < ? AND id NOT IN "
+                "(SELECT item_id FROM alerts WHERE feedback IS NOT NULL)", (cutoff,)).rowcount
             self.conn.execute("DELETE FROM source_runs WHERE run_at < ?", (cutoff,))
         return removed
 
@@ -313,6 +316,22 @@ class Storage:
             "SELECT a.*, i.title, i.url, i.topic, i.source, i.published_at, i.text, i.flags, "
             "i.sentiment_label, i.mentions FROM alerts a JOIN items i ON i.id = a.item_id "
             "WHERE a.status = ? ORDER BY a.score DESC", (status,)).fetchall()
+
+    def set_feedback(self, item_id: str, vote: int, now: datetime) -> bool:
+        """Store 👍 (+1) / 👎 (-1) for an alert; a later vote replaces an earlier one."""
+        with self.lock, self.conn:
+            cur = self.conn.execute(
+                "UPDATE alerts SET feedback = ?, feedback_at = ? WHERE item_id = ?",
+                (1 if vote > 0 else -1, iso(now), item_id))
+        return bool(cur.rowcount)
+
+    def feedback_rows(self, since: datetime) -> list[sqlite3.Row]:
+        """Sent alerts (with or without a vote) joined with their scoring details."""
+        return self.conn.execute(
+            "SELECT a.item_id, a.feedback, a.reason, a.score, i.title, i.source, i.topic, "
+            "i.flags, i.reasons FROM alerts a JOIN items i ON i.id = a.item_id "
+            "WHERE a.status = 'sent' AND a.created_at >= ? ORDER BY a.created_at",
+            (iso(since),)).fetchall()
 
     def alert_counts_since(self, since: datetime) -> dict[str, int]:
         rows = self.conn.execute(

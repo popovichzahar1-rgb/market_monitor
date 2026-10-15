@@ -31,7 +31,7 @@ class CommandProcessor:
     def __init__(self, client: TelegramClient, chat_id: str, settings: Settings,
                  notifier: Notifier, status: Callable[[], str],
                  lookup: Lookup | None = None, on_callback: CallbackHandler | None = None,
-                 save_offset: bool = True) -> None:
+                 save_offset: bool = True, feedback: Callable[[], str] | None = None) -> None:
         self.client = client
         self.chat_id = str(chat_id)
         self.settings = settings
@@ -40,6 +40,7 @@ class CommandProcessor:
         self.lookup = lookup
         self.on_callback = on_callback
         self.save_offset = save_offset
+        self.feedback = feedback
 
     def process(self) -> int:
         """Handle pending updates; returns the number of handled commands."""
@@ -95,6 +96,7 @@ class CommandProcessor:
             "/status": self.cmd_status,
             "/peers": self.cmd_peers, "/suppliers": self.cmd_suppliers,
             "/sector": self.cmd_sector, "/alias": self.cmd_alias,
+            "/feedback": self.cmd_feedback,
         }.get(command)
         if handler is None:
             return "Невідома команда. /start — список команд."
@@ -187,6 +189,9 @@ class CommandProcessor:
 
     def cmd_status(self, args: list[str]) -> str:
         return self.status()
+
+    def cmd_feedback(self, args: list[str]) -> str:
+        return self.feedback() if self.feedback else "Звіт за відгуками недоступний."
 
     def _set_list(self, args: list[str], field: str, label: str, example: str) -> str:
         if not args:

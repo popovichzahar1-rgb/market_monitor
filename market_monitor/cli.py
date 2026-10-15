@@ -28,6 +28,7 @@ from market_monitor.collectors.sec_edgar import configure_http as configure_sec_
 from market_monitor.collectors.sec_edgar import load_ticker_map
 from market_monitor.config import Config, Secrets, load_config
 from market_monitor.digest import build_digest, digest_due, last_digest_at, mark_digest_sent
+from market_monitor.feedback import FeedbackHandler, build_report
 from market_monitor.http import HttpClient
 from market_monitor.logging_setup import setup_logging
 from market_monitor.models import Item
@@ -60,6 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = sub.add_parser("commands", help="process pending bot commands only")
     commands.add_argument("--dry-run", action="store_true")
     sub.add_parser("status", help="print source health")
+    fb = sub.add_parser("feedback", help="👍/👎 statistics and tuning suggestions")
+    fb.add_argument("--days", type=int, default=30)
     state = sub.add_parser("state", help="pack/unpack the encrypted state file (CI)")
     state.add_argument("action", choices=["pack", "unpack"])
     state.add_argument("--file", required=True, help="packed state file (.db.enc)")
@@ -110,7 +113,9 @@ class App:
             return
         processor = CommandProcessor(
             self.telegram, self.secrets.telegram_chat_id, self.settings, self.notifier,
-            status=self.status_text, lookup=self.lookup_ticker, save_offset=not self.dry_run)
+            status=self.status_text, lookup=self.lookup_ticker, save_offset=not self.dry_run,
+            on_callback=FeedbackHandler(self.storage, self.telegram, self.now),
+            feedback=self.feedback_text)
         handled = processor.process()
         if handled:
             log.info("handled %d bot commands", handled)
@@ -122,6 +127,9 @@ class App:
                                   self.base.sources.sec_edgar.tickers_cache_hours)
         entry = mapping.get(ticker)
         return (entry["title"], entry["cik"]) if entry else None
+
+    def feedback_text(self, days: int = 30) -> str:
+        return fmt.format_feedback_report(build_report(self.storage, self.now, days))
 
     def status_text(self) -> str:
         config, storage, now = self.config, self.storage, self.now
@@ -137,6 +145,7 @@ class App:
             "queued": len(storage.alerts_by_status("queued")),
             "last_digest": fmt.local_time(config, last, "%d.%m %H:%M") if last else None,
             "sentiment": sentiment.name if sentiment else "вимкнено",
+            "feedback": build_report(storage, now, 30).overall,
         }
         return fmt.format_status(config, storage.source_health(now), stats, now)
 
@@ -304,6 +313,9 @@ def main(argv: list[str] | None = None, http: HttpClient | None = None,
             return 0
         if args.command == "status":
             return cmd_status(app)
+        if args.command == "feedback":
+            print(fmt.to_plain_text(app.feedback_text(args.days)))
+            return 0
     return 2
 
 

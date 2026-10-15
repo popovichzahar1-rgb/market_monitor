@@ -6,6 +6,8 @@ one line (messages are split on line boundaries).
 
 from __future__ import annotations
 
+import html
+import re
 from datetime import datetime
 from html import escape
 from typing import TYPE_CHECKING
@@ -16,6 +18,7 @@ from market_monitor.textutil import truncate
 if TYPE_CHECKING:
     from market_monitor.alerts import AlertView
     from market_monitor.digest import DigestData
+    from market_monitor.feedback import FeedbackReport
     from market_monitor.storage import SourceHealth
 
 DISCLAIMER = "ℹ️ Лише інформація, не є фінансовою порадою. Рішення ухвалюєте ви."
@@ -38,6 +41,11 @@ FLAG_LABELS = {
     "sec_8k": "новий 8-K",
     "watchlist": "компанія зі списку",
 }
+
+
+def to_plain_text(text: str) -> str:
+    """Telegram HTML -> terminal text (CLI output)."""
+    return html.unescape(re.sub(r"<[^>]+>", "", text))
 
 
 def plural(n: int, one: str, few: str, many: str) -> str:
@@ -241,6 +249,9 @@ HELP = """<b>Market Monitor</b> — збирає й фільтрує новин�
 /threshold — пороги алертів; /threshold 75 · /threshold urgent 60 · /threshold priority 65
 /digest_time — час дайджесту; /digest_time 19:30
 /status — стан джерел і алертів
+/feedback — що показали ваші 👍/👎 і що варто підкрутити
+
+Під кожним алертом є кнопки 👍 Корисно / 👎 Шум: вони допомагають налаштувати правила.
 
 Команди обробляються під час найближчого запуску (до ~30 хв)."""
 
@@ -302,4 +313,34 @@ def format_status(config: Config, health: list["SourceHealth"], stats: dict, now
         f"🧠 Тон тексту: {escape(stats.get('sentiment', '?'))}",
         f"💼 Компаній у списку: {len(config.watchlist)}",
     ]
+    if (fb := stats.get("feedback")) is not None and fb.total:
+        lines.append(f"🧪 Відгуки за 30 днів: {fb.up}👍 {fb.down}👎 — докладніше /feedback")
+    return "\n".join(lines)
+
+
+def format_feedback_report(report: "FeedbackReport", limit: int = 6) -> str:
+    o = report.overall
+    lines = [f"🧪 <b>Відгуки за {report.days} днів</b>"]
+    if not o.total:
+        lines.append(f"Ще немає оцінок ({report.unrated} алертів без відгуку). "
+                     "Натискайте 👍/👎 під алертами — і тут з'являться підказки.")
+        return "\n".join(lines)
+    lines.append(f"👍 {o.up} · 👎 {o.down} · без оцінки {report.unrated} "
+                 f"(шуму {o.down_ratio:.0%})")
+
+    def table(title: str, data: dict) -> None:
+        rows = sorted(data.items(), key=lambda kv: (-kv[1].total, kv[0]))[:limit]
+        if rows:
+            lines.extend(["", f"<b>{title}</b>"])
+            lines.extend(f"• <code>{escape(k)}</code>: {t.up}👍 {t.down}👎" for k, t in rows)
+
+    table("Правила й категорії", report.by_rule)
+    table("Джерела", report.by_source)
+    if report.noisy_examples:
+        lines.extend(["", "<b>Найвищі оцінки серед 👎</b>"])
+        lines.extend(f"• {score:.0f} — {escape(truncate(title, 90))}"
+                     for score, title in report.noisy_examples[:3])
+    lines.extend(["", "<b>Підказки</b>"])
+    lines.extend(f"• {escape(s)}" for s in report.suggestions) if report.suggestions else \
+        lines.append("• Замало оцінок для висновків (потрібно хоча б 3 на правило).")
     return "\n".join(lines)

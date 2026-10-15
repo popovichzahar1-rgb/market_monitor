@@ -64,6 +64,12 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   `enrich` hook in `pipeline.collect` and again live in `digest.company_blocks`.
 - SEC collector also stores `sec:latest:<T>` (latest filing per form, any age) and
   `sec:profile:<T>` (name, SIC industry) for the digest company block.
+- `feedback.py`: alert messages carry 👍/👎 inline buttons (`fb:u|d:<item_id>`);
+  `FeedbackHandler` (CommandProcessor `on_callback`) stores the vote in
+  `alerts.feedback` and marks the chosen button (votes can be changed).
+  `build_report` aggregates votes by rule/flag, source, topic and alert reason and
+  produces *suggestions* only; never auto-tune config. Items with a vote survive
+  `prune` (tuning history).
 - Ukrainian plurals via `formatting.plural` (1 джерело, 2 джерела, 5 джерел).
 - `pipeline.collect` runs collectors in a thread pool (`collect_workers`); collectors
   only touch state through `BufferedState` (flushed by the main thread), and all
@@ -79,11 +85,13 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
 - `config.py`: pydantic models with `extra="forbid"`; config.yaml typos must fail.
 
 ## Testing
-- `python -m pytest`, offline only. HTTP via `httpx.MockTransport` (`make_http`,
+- `python -m pytest`, offline only (~4 s). Coverage: `python -m pytest --cov=market_monitor`
+  (keep ≥ 90 %). HTTP via `httpx.MockTransport` (`make_http`,
   `route` in tests/conftest.py); fixtures in `tests/fixtures/`.
 - Every collector and scoring rule gets fixture-based tests.
 - `python -m market_monitor run --dry-run` prints Telegram messages instead of sending.
   Telegram in tests: `FakeTelegram` + `telegram_env` fixture (tests/conftest.py).
 - `python -m market_monitor explain "headline" [--source rss:fed] [--tags crypto]`
-  shows score breakdown; add a parametrized case to tests/test_scoring.py when
-  changing rules.
+  shows score breakdown and the alert decision; add a parametrized case to
+  tests/test_scoring.py when changing rules (real headlines that misfired live
+  belong in `test_live_false_positives_stay_below_alert`).
