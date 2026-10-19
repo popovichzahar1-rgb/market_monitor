@@ -296,3 +296,21 @@ def test_coinbase_move_scores_and_alerts(make_http, storage, now):
                      published_at=now, topic=s.topic, score=s.score, flags=s.flags)
     assert s.topic == "crypto" and "crypto_price_move" in s.flags
     assert alert_reason(view, real) is not None
+
+
+
+def test_fred_calendar_is_refreshed_only_every_12_hours(make_http, storage, now):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path.rsplit("/", 1)[-1])
+        return fred_handler(request)
+
+    ctx, cfg = make_ctx(make_http, handler, storage, now, **FRED_CFG)
+    collector = FredCollector(cfg.sources.fred)
+    collector.collect(ctx)
+    ctx.now = now + timedelta(hours=1)
+    collector.collect(ctx)
+    ctx.now = now + timedelta(hours=13)
+    collector.collect(ctx)
+    assert calls.count("dates") == 2 and calls.count("observations") == 6

@@ -91,6 +91,8 @@ class FredSourceConfig(SourceConfig):
     calendar_days_ahead: int = 7
     # Release names (substring, case-insensitive) to put into the event calendar.
     calendar_releases: list[str] = Field(default_factory=list)
+    # The release calendar endpoint is slow (20-30 s) and changes rarely.
+    calendar_refresh_hours: int = 12
     min_interval_s: float = 0.6
 
 

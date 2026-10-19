@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 API = "https://api.stlouisfed.org/fred"
 API_HOST = "api.stlouisfed.org"
+CALENDAR_KEY = "fred:calendar:fetched_at"
 
 
 def valid_observations(payload: dict) -> list[tuple[str, float]]:
@@ -130,7 +131,11 @@ class FredCollector(Collector):
             except Exception as exc:
                 log.warning("fred %s failed: %s", series.id, exc)
                 result.errors.append(f"{series.id}: {exc}")
-        if cfg.calendar_releases:
+        last_calendar = ctx.state.kv_get(CALENDAR_KEY)
+        calendar_due = last_calendar is None or (
+            ctx.now - datetime.fromisoformat(last_calendar)
+            >= timedelta(hours=cfg.calendar_refresh_hours))
+        if cfg.calendar_releases and calendar_due:
             attempts += 1
             try:
                 start = ctx.now.date()
@@ -141,6 +146,7 @@ class FredCollector(Collector):
                     "include_release_dates_with_no_data": "true",
                     "sort_order": "asc", "limit": "1000"})
                 result.items.extend(calendar_items(json_or_error(resp), cfg, ctx.now))
+                ctx.state.kv_set(CALENDAR_KEY, ctx.now.isoformat())
             except Exception as exc:
                 log.warning("fred calendar failed: %s", exc)
                 result.errors.append(f"calendar: {exc}")
