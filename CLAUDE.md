@@ -62,6 +62,9 @@ Telegram alerts and daily digest. Information only, **never** trading logic.
   `item.entities`; peers/suppliers/sector_keywords → `item.meta["related"]`
   (bonus `watchlist_related_bonus`, never the `watchlist` flag). Runs as the
   `enrich` hook in `pipeline.collect` and again live in `digest.company_blocks`.
+- Crypto prices: `coinbase` collector (Coinbase Exchange `/products/<id>/stats`: 24 h
+  change = last vs open), writes the `prices:crypto` snapshot used by the digest.
+  `coingecko` stays in code but is disabled (its robots.txt disallows the API paths).
 - SEC collector also stores `sec:latest:<T>` (latest filing per form, any age) and
   `sec:profile:<T>` (name, SIC industry) for the digest company block.
 - `feedback.py`: alert messages carry 👍/👎 inline buttons (`fb:u|d:<item_id>`);

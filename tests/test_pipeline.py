@@ -64,7 +64,7 @@ def full_handler(request):
     """Serves fixtures for every source in the real config.yaml; anything else -> 404."""
     import httpx
 
-    from test_collectors_data import CG_ROUTES, SEC_ROUTES, fred_handler
+    from test_collectors_data import CB_ROUTES, CG_ROUTES, SEC_ROUTES, fred_handler
 
     url = str(request.url.copy_with(query=None))
     if request.url.path == "/robots.txt":
@@ -77,7 +77,7 @@ def full_handler(request):
         "https://api.gdeltproject.org/api/v2/doc/doc": fixture_bytes("gdelt_artlist.json"),
         "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson":
             fixture_bytes("usgs_quakes.geojson"),
-        **CG_ROUTES, **SEC_ROUTES,
+        **CG_ROUTES, **CB_ROUTES, **SEC_ROUTES,
     }
     if url in fixtures:
         return httpx.Response(200, content=fixtures[url])
@@ -93,7 +93,7 @@ def test_full_config_end_to_end(make_http, storage, secrets, now):
     config = type(load_config("config.yaml")).model_validate(data)
     report = pipeline.collect(config, secrets, storage, make_http(full_handler), now)
     by_source = {s.source: s for s in report.sources}
-    assert set(by_source) == {"rss", "gdelt", "sec_edgar", "fred", "coingecko", "usgs"}
+    assert set(by_source) == {"rss", "gdelt", "sec_edgar", "fred", "coingecko", "coinbase", "usgs"}
     assert all(s.ok for s in report.sources)  # partial feed failures don't fail a source
     # 6 GDELT queries return the same fixture: one copy each is new, the rest are duplicates;
     # within the fixture the two Hormuz headlines are merged as one story.

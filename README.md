@@ -121,7 +121,7 @@
 
 ### Дайджест (щодня о 20:00)
 
-1. 📈 Ринок: Brent, газ, UST 10Y, VIX (і BTC/ETH, якщо увімкнено джерело цін).
+1. 📈 Ринок: BTC, ETH, Brent, газ, UST 10Y, VIX.
 2. 📅 Події на 7 днів: релізи CPI, payrolls, ВВП, FOMC.
 3. Топ-5 подій із кожної теми (🚨 позначає те, що вже було алертом).
 4. 💼 Мій список відстеження (лише якщо список не порожній): останні 8-K/10-Q/10-K,
@@ -196,8 +196,9 @@ python -m market_monitor explain "OPEC+ agrees surprise output cut" --source rss
 | `sec_edgar` | 8-K/10-Q/10-K/6-K/20-F компаній зі списку, профіль і останні звіти | `SEC_CONTACT_EMAIL` | ✅ |
 | `fred` | CPI, core CPI/PCE, payrolls, безробіття, HICP єврозони; різкі рухи DFF, 10Y, VIX, Brent, газу; календар релізів | `FRED_API_KEY` | ✅ |
 | `usgs` | землетруси M ≥ 6.5 або PAGER orange/red | — | ✅ |
+| `coinbase` | ціни BTC/ETH для дайджесту й алерти на рух ±7 % за 24 год (офіційний публічний API Coinbase Exchange) | — | ✅ |
 | `gdelt` | світовий пошук новин за темами | — | ⛔ з IP-адрес GitHub майже завжди HTTP 429; локально працює |
-| `coingecko` | різкі рухи BTC/ETH і всього крипторинку, ціни для дайджесту | — | ⛔ `robots.txt` API забороняє ці шляхи (див. нижче) |
+| `coingecko` | те саме + зміна капіталізації всього крипторинку | — | ⛔ `robots.txt` API забороняє ці шляхи; замінено на `coinbase` |
 
 Правила роботи з джерелами:
 - лише офіційні API, RSS і відкриті дані;
@@ -206,10 +207,10 @@ python -m market_monitor explain "OPEC+ agrees surprise output cut" --source rss
 - незмінені стрічки віддають `304`;
 - кожне джерело має бюджет часу 90 с, і збій одного джерела не зупиняє решту.
 
-**CoinGecko.** API офіційний і безкоштовний, але `robots.txt` на `api.coingecko.com`
-забороняє ці шляхи, тому джерело вимкнено. Варіанти: (а) дозволити саме його
-(`sources.coingecko.enabled: true` + виключення з перевірки robots), (б) інше
-офіційне API цін, (в) лише щоденні ціни з FRED.
+**Ціни крипти.** CoinGecko вимкнено, бо `robots.txt` на `api.coingecko.com` забороняє
+його шляхи. Замість нього працює `coinbase`: офіційний публічний API без ключа, який
+одразу віддає ціну 24 год тому, тож зміна за добу рахується за один запит на монету.
+Додати монету: `sources.coinbase.products` (напр. `SOL: SOL-USD`).
 
 ## GitHub Actions і збереження стану
 
@@ -289,6 +290,7 @@ python scripts/export_finbert.py --out models/finbert-onnx
 | Бот мовчить | `/status` (відповідь прийде з наступним запуском); Actions → monitor: чи є попередження «Not configured yet»; чи правильний `TELEGRAM_CHAT_ID` |
 | «cannot decrypt state» | `STATE_ENCRYPTION_KEY` змінився. Поверніть старий ключ або видаліть гілку `data` (стан почнеться заново) |
 | Помилка push у кроці persist | Workflow permissions → Read and write |
+| Немає цін BTC/ETH у дайджесті | `/status`: чи працює `coinbase` |
 | Джерело ❗ у дайджесті | `/status` показує помилку; 404 — стрічка змінила адресу (виправте URL у `config.yaml`); `robots.txt disallows` — сайт забороняє, вимкніть стрічку |
 | Забагато алертів | `/feedback`, потім `/threshold 85` або `/threshold urgent 70`; `/topics off …` |
 | Замало алертів | `explain` для пропущеного заголовка; знизьте пороги або додайте ключові слова в `scoring.rules` |

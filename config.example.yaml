@@ -152,6 +152,14 @@ sources:
     market_move_threshold_pct: 5
     cooldown_hours: 6
 
+  # BTC/ETH prices and sharp 24h moves from the official Coinbase Exchange public API
+  # (no key). Replaces CoinGecko as the default price source.
+  coinbase:
+    enabled: true
+    products: {BTC: BTC-USD, ETH: ETH-USD}
+    move_threshold_pct: 7      # alert-worthy 24h move, %
+    cooldown_hours: 6          # at most one move item per coin per window
+
   # Strong earthquakes (supply chains: Taiwan/Japan chips, ports, energy).
   usgs:
     enabled: true

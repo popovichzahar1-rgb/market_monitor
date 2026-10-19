@@ -102,6 +102,14 @@ class CoinGeckoSourceConfig(SourceConfig):
     min_interval_s: float = 2.5
 
 
+class CoinbaseSourceConfig(SourceConfig):
+    # symbol -> Coinbase Exchange product id
+    products: dict[str, str] = Field(default_factory=lambda: {"BTC": "BTC-USD", "ETH": "ETH-USD"})
+    move_threshold_pct: float = 7.0
+    cooldown_hours: int = 6
+    min_interval_s: float = 0.4
+
+
 class UsgsSourceConfig(SourceConfig):
     feed_url: str = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson"
     min_magnitude: float = 6.5
@@ -114,6 +122,7 @@ class SourcesConfig(_Strict):
     sec_edgar: SecEdgarSourceConfig = Field(default_factory=SecEdgarSourceConfig)
     fred: FredSourceConfig = Field(default_factory=lambda: FredSourceConfig(enabled=False))
     coingecko: CoinGeckoSourceConfig = Field(default_factory=lambda: CoinGeckoSourceConfig(enabled=False))
+    coinbase: CoinbaseSourceConfig = Field(default_factory=lambda: CoinbaseSourceConfig(enabled=False))
     usgs: UsgsSourceConfig = Field(default_factory=lambda: UsgsSourceConfig(enabled=False))
 
 

@@ -233,3 +233,66 @@ def test_gdelt_circuit_breaker_on_429(make_http, storage, now):
     with pytest.raises(CollectorError, match="429"):
         GdeltCollector(config.sources.gdelt).collect(ctx)
     assert len(calls) == 1  # no retries, remaining queries skipped
+
+
+# ---- Coinbase -----------------------------------------------------------------
+
+CB_ROUTES = {
+    "https://api.exchange.coinbase.com/products/BTC-USD/stats": fixture_bytes("coinbase_btc_stats.json"),
+    "https://api.exchange.coinbase.com/products/ETH-USD/stats": fixture_bytes("coinbase_eth_stats.json"),
+}
+
+
+def test_coinbase_moves_and_snapshot(make_http, storage, now):
+    from market_monitor.collectors.coinbase import CoinbaseCollector
+
+    ctx, cfg = make_ctx(make_http, route(CB_ROUTES), storage, now,
+                        sources={"coinbase": {"enabled": True}})
+    result = CoinbaseCollector(cfg.sources.coinbase).collect(ctx)
+    # BTC: 63500 -> 58166.5 = -8.4 % (alert-worthy); ETH: -2.8 % (snapshot only)
+    assert [i.title for i in result.items] == ["BTC down -8.4% in 24h to $58,166"]
+    item = result.items[0]
+    assert item.entities == ["BTC"] and "price_move" in item.tags and "data" in item.tags
+    assert item.meta["change_24h_pct"] == -8.4
+    snap = json.loads(storage.kv_get("prices:crypto"))
+    assert snap["source"] == "Coinbase"
+    assert snap["coins"]["ETH"] == {"usd": 2410.1, "change_24h_pct": -2.82}
+
+
+def test_coinbase_partial_and_total_failure(make_http, storage, now):
+    from market_monitor.collectors.coinbase import CoinbaseCollector
+
+    only_btc = {k: v for k, v in CB_ROUTES.items() if "BTC" in k}
+    ctx, cfg = make_ctx(make_http, route(only_btc), storage, now,
+                        sources={"coinbase": {"enabled": True}})
+    result = CoinbaseCollector(cfg.sources.coinbase).collect(ctx)
+    assert len(result.items) == 1 and result.errors[0].startswith("ETH-USD:")
+    ctx, cfg = make_ctx(make_http, route({}), storage, now, sources={"coinbase": {"enabled": True}})
+    with pytest.raises(CollectorError):
+        CoinbaseCollector(cfg.sources.coinbase).collect(ctx)
+
+
+def test_coinbase_bad_payload_is_an_error(make_http, storage, now):
+    from market_monitor.collectors.coinbase import CoinbaseCollector
+
+    bad = {k: b'{"message": "NotFound"}' for k in CB_ROUTES}
+    ctx, cfg = make_ctx(make_http, route(bad), storage, now, sources={"coinbase": {"enabled": True}})
+    with pytest.raises(CollectorError, match="incomplete Coinbase stats"):
+        CoinbaseCollector(cfg.sources.coinbase).collect(ctx)
+
+
+def test_coinbase_move_scores_and_alerts(make_http, storage, now):
+    """A -8.4 % BTC move must reach the alert threshold with the real config."""
+    from market_monitor.alerts import AlertView, alert_reason
+    from market_monitor.collectors.coinbase import CoinbaseCollector
+    from market_monitor.config import load_config
+    from market_monitor.scoring import Scorer
+
+    real = load_config("config.yaml")
+    ctx, _ = make_ctx(make_http, route(CB_ROUTES), storage, now, sources={"coinbase": {"enabled": True}})
+    (item,) = CoinbaseCollector(real.sources.coinbase).collect(ctx).items
+    (s,) = Scorer(real, use_default_model=False).score([item])
+    view = AlertView(item_id=item.id, title=item.title, url=item.url, text="", source=item.source,
+                     published_at=now, topic=s.topic, score=s.score, flags=s.flags)
+    assert s.topic == "crypto" and "crypto_price_move" in s.flags
+    assert alert_reason(view, real) is not None

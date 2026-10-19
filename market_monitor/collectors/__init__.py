@@ -9,6 +9,7 @@ from market_monitor.collectors.base import (  # noqa: F401
     build_collectors,
 )
 from market_monitor.collectors import (  # noqa: F401  (modules register themselves)
+    coinbase,
     coingecko,
     fred,
     gdelt,
